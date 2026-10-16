@@ -27,6 +27,20 @@ pub const ZOOM_OUT_LIMIT: f32 = 1.5;
 /// One step of the menu's zoom, as a factor.
 const ZOOM_STEP: f32 = 1.4;
 
+/// The start of the frame `seconds` falls in, at `rate` frames a second:
+/// where the playhead goes, so it is always on the frame grid and never
+/// between two frames. A hundredth of a frame under a boundary counts as on
+/// it, since a frame's own start spelt in f32 can come in a hair short. No
+/// usable rate, and the instant is left as it is.
+pub fn frame_floor(seconds: f32, rate: f32) -> f32 {
+    if !(rate.is_finite() && rate > 0.0) {
+        return seconds;
+    }
+    let rate = f64::from(rate);
+    let frame = (f64::from(seconds.max(0.0)) * rate + 0.01).floor();
+    (frame / rate) as f32
+}
+
 /// What the window knows about a lane that the document does not: whether
 /// it is locked, and how tall to draw it.
 #[derive(Clone, Copy)]
@@ -337,6 +351,31 @@ mod tests {
         assert_eq!(view.scroll_left, -4.0);
         view.scrolled(-4.0);
         assert_eq!(view.scroll_left, 0.0);
+    }
+
+    /// Anywhere inside a frame is that frame's start; a frame's own start
+    /// stays put, however f32 spells it.
+    #[test]
+    fn the_playhead_lands_on_the_start_of_its_frame() {
+        let close = |a: f32, b: f32| (a - b).abs() <= 1e-6 * b.abs().max(1.0);
+        // 60 fps: 0.125 s is inside frame 7, which starts at 7/60.
+        assert!(close(frame_floor(0.125, 60.0), 7.0 / 60.0));
+        assert!(close(frame_floor(7.0 / 60.0, 60.0), 7.0 / 60.0));
+        // A millisecond short of frame 8 is still frame 7; a hair short,
+        // inside the hundredth of slack, is frame 8.
+        assert!(close(frame_floor(8.0 / 60.0 - 1e-3, 60.0), 7.0 / 60.0));
+        assert!(close(frame_floor(8.0 / 60.0 - 1e-5, 60.0), 8.0 / 60.0));
+        for frame in 0..10_000 {
+            let start = frame as f32 / 60.0;
+            assert!(close(frame_floor(start, 60.0), start), "frame {frame}");
+        }
+        // NTSC: a frame is 1001/30000 of a second.
+        let ntsc: f32 = 30_000.0 / 1001.0;
+        assert!(close(frame_floor(1.0, ntsc), 29.0 / ntsc));
+        // Never before zero, and no rate leaves the instant alone.
+        assert_eq!(frame_floor(-3.0, 30.0), 0.0);
+        assert_eq!(frame_floor(0.123, 0.0), 0.123);
+        assert_eq!(frame_floor(0.123, f32::NAN), 0.123);
     }
 
     #[test]

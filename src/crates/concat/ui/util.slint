@@ -61,8 +61,10 @@ export global Fmt {
             + ":" + Fmt.pad2(Math.mod(Fmt.total-frames(seconds, rate), Math.round(rate)));
     }
 
+    // A hundredth of a frame of slack: a frame's own start, spelt in a
+    // float, can land a hair under it and would read as the frame before.
     pure function total-frames(seconds: float, rate: float) -> int {
-        return Math.floor(Math.max(0, seconds) * rate);
+        return Math.floor(Math.max(0, seconds) * rate + 0.01);
     }
 
     public pure function decibels(v: float) -> string {
@@ -73,13 +75,14 @@ export global Fmt {
     // implemented in Rust and bound in main.rs.
     pure callback parse-timecode(text: string) -> float;
 
-    // The ruler's tick spacing: the smallest interval from a fixed ladder of
-    // musical-looking durations (a frame, a tenth, a quarter, ... an hour)
-    // that is still at least 90px apart at this zoom. Picking from a table
-    // means searching one, which is a loop — so it lives in Rust with the
-    // bezier solve. Unbound it returns 0, which the ruler reads as "draw no
-    // ticks" rather than dividing by it.
-    pure callback tick-interval(seconds-per-pixel: float) -> float;
+    // The ruler's tick spacing: the smallest interval from a fixed ladder -
+    // the cut's own frames under a second (1, 2, 5, 10, half a second's
+    // worth), the clock's durations above it - that is still at least 90px
+    // apart at this zoom. Picking from a table means searching one, which
+    // is a loop — so it lives in Rust with the bezier solve. Unbound it
+    // returns 0, which the ruler reads as "draw no ticks" rather than
+    // dividing by it.
+    pure callback tick-interval(seconds-per-pixel: float, rate: float) -> float;
 
     // hh:mm:ss:ff -> frames. The monitor counts in frames, so its field parses
     // in frames; `parse-timecode` above stops at seconds and would drop the

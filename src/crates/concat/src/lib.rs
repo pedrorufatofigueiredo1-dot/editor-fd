@@ -895,7 +895,7 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
         state.move_keys_at(from, to);
     }));
     editor.on_scrubbed(on_lanes!(|state, seconds: f32| {
-        state.seek(seconds.max(0.0));
+        state.seek_frame(seconds.max(0.0));
     }));
     editor.on_scrolled(on_lanes!(|state, seconds: f32| {
         state.handle(Msg::Timeline(TimelineMsg::Scrolled(seconds)));
@@ -1155,13 +1155,15 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
     // ── the monitor ──
     editor.on_seek(on_lanes!(|state, seconds: f32| {
         state.pause();
-        state.seek(seconds);
+        state.seek_frame(seconds);
     }));
+    // In the cut's own frames, at its exact rate, so a step lands on the
+    // same grid the lanes draw: at 59.94 a sixtieth is not a frame.
     editor.on_step_frames(on_lanes!(|state, frames: f32| {
         state.pause();
-        let fps = state.frame_rate().round().max(1.0);
-        let at = (state.playhead * fps).round() + frames;
-        state.seek(at / fps);
+        let rate = state.frame_rate().max(1.0);
+        let at = (state.playhead * rate).round() + frames;
+        state.seek_frame((at / rate).max(0.0));
     }));
     editor.on_ratio_changed(on_window!(|state, index: i32| {
         state.set_output((index.max(0) as usize).min(OUTPUTS.len() - 1));

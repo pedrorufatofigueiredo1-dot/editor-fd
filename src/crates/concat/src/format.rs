@@ -29,7 +29,9 @@ pub fn bezier_y_at_x(x1: f32, y1: f32, x2: f32, y2: f32, x: f32) -> f32 {
 /// the Details panel's duration reads like the readout beside it.
 pub fn frames_timecode(seconds: f32, rate: f32) -> String {
     let rate = rate.round().max(1.0) as i64;
-    let frames = (seconds.max(0.0) * rate as f32).floor() as i64;
+    // A hundredth of a frame of slack: a frame's own start, spelt in f32,
+    // can land a hair under it and would read as the frame before.
+    let frames = (seconds.max(0.0) * rate as f32 + 0.01).floor() as i64;
     let whole = frames / rate;
     format!(
         "{:02}:{:02}:{:02}:{:02}",
@@ -82,31 +84,43 @@ pub fn parse_bezier(text: &str, fallback: Bezier) -> Bezier {
     }
 }
 
-/// The ruler's tick spacings, in seconds, finest to coarsest.
-const TICKS: [f32; 16] = [
-    1.0 / 30.0,
-    0.1,
-    0.25,
-    0.5,
-    1.0,
-    2.0,
-    5.0,
-    10.0,
-    15.0,
-    30.0,
-    60.0,
-    120.0,
-    300.0,
-    600.0,
-    1800.0,
-    3600.0,
+/// The ruler's tick spacings from a second up, in seconds, finest to
+/// coarsest. Under a second the ladder is counted in frames; see
+/// `FRAME_TICKS`.
+const TICKS: [f32; 12] = [
+    1.0, 2.0, 5.0, 10.0, 15.0, 30.0, 60.0, 120.0, 300.0, 600.0, 1800.0, 3600.0,
 ];
 
-pub fn tick_interval(seconds_per_pixel: f32) -> f32 {
+/// The ruler's spacings under a second, in frames of the cut; a half
+/// second's worth of frames comes after them.
+const FRAME_TICKS: [f32; 4] = [1.0, 2.0, 5.0, 10.0];
+
+/// The ruler's tick spacing at this zoom, in seconds: the finest step on
+/// the ladder that is still 90px apart. Under a second the ladder counts in
+/// the cut's own frames - 1, 2, 5, 10, then half a second's worth - so a
+/// ruler zoomed in to frames labels frames and never a point between two;
+/// a fixed 1/30 s step fell between the frames of a 60 fps cut. From a
+/// second up it is the clock's.
+pub fn tick_interval(seconds_per_pixel: f32, rate: f32) -> f32 {
+    let apart = |interval: f32| interval / seconds_per_pixel >= 90.0;
+    if rate.is_finite() && rate >= 1.0 {
+        let whole = rate.round();
+        let half = (whole / 2.0).floor();
+        let frames = FRAME_TICKS
+            .iter()
+            .copied()
+            .chain((half > 10.0).then_some(half))
+            .filter(|&frames| frames < whole);
+        for frames in frames {
+            if apart(frames / rate) {
+                return frames / rate;
+            }
+        }
+    }
     TICKS
         .iter()
         .copied()
-        .find(|interval| interval / seconds_per_pixel >= 90.0)
+        .find(|&interval| apart(interval))
         .unwrap_or(3600.0)
 }
 
@@ -340,6 +354,52 @@ pub fn hex_with_alpha(colour: slint::Color) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Zoomed in, the ruler steps in the cut's own frames; zoomed out, in
+    /// the clock's seconds; and every step is at least 90px wide.
+    #[test]
+    fn the_ruler_counts_frames_under_a_second() {
+        let close = |a: f32, b: f32| (a - b).abs() < 1e-6;
+        // 60 fps at the closest zoom: a frame is 33px, five are 167px.
+        assert!(close(tick_interval(0.000_5, 60.0), 5.0 / 60.0));
+        // 30 fps there: a frame is 67px, two are 133px.
+        assert!(close(tick_interval(0.000_5, 30.0), 2.0 / 30.0));
+        // A frame at 25 fps is 40ms: a frame a tick at 0.4 ms a pixel.
+        assert!(close(tick_interval(0.000_4, 25.0), 1.0 / 25.0));
+        // Half a second of 60 fps is 30 frames, after the 10.
+        assert!(close(tick_interval(0.004, 60.0), 30.0 / 60.0));
+        // The ladder never offers a step of a second or more in frames.
+        assert!(close(tick_interval(0.01, 30.0), 1.0));
+        assert!(close(tick_interval(0.05, 60.0), 5.0));
+        // An NTSC frame is 1001/30000 of a second, not a thirtieth.
+        assert!(close(tick_interval(0.000_3, 29.97), 1.0 / 29.97));
+        // No rate to count in: the clock's ladder, from a second.
+        assert!(close(tick_interval(0.000_5, 0.0), 1.0));
+        for rate in [24.0, 25.0, 29.97, 30.0, 50.0, 59.94, 60.0] {
+            for spp in [0.000_5, 0.001, 0.003, 0.01, 0.05, 0.2, 1.5] {
+                assert!(
+                    tick_interval(spp, rate) / spp >= 90.0,
+                    "{rate} fps at {spp}"
+                );
+            }
+        }
+    }
+
+    /// A frame's own start reads as that frame, though f32 spells it a
+    /// hair under.
+    #[test]
+    fn a_frame_start_reads_as_its_own_frame() {
+        assert_eq!(frames_timecode(7.0 / 60.0, 60.0), "00:00:00:07");
+        assert_eq!(frames_timecode(61.0 / 60.0, 60.0), "00:00:01:01");
+        assert_eq!(frames_timecode(29.0 / 30.0, 30.0), "00:00:00:29");
+        for frame in 0..600 {
+            let text = frames_timecode(frame as f32 / 60.0, 60.0);
+            assert!(
+                text.ends_with(&format!("{:02}", frame % 60)),
+                "{frame}: {text}"
+            );
+        }
+    }
 
     #[test]
     fn colours_round_trip() {

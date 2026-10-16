@@ -2767,6 +2767,14 @@ impl Studio {
         // The textures playback streamed through are let go once it stops.
         if was_playing {
             self.host.monitor.shrink();
+            // Playback runs on the clock and stops wherever it is; the
+            // playhead goes back to the start of the frame it is showing,
+            // which is the same picture, on the grid.
+            let snapped = crate::panes::timeline::frame_floor(self.playhead, self.frame_rate());
+            if snapped != self.playhead {
+                self.playhead = snapped;
+                self.host.playback.seek(f64::from(snapped));
+            }
         }
     }
 
@@ -2785,6 +2793,16 @@ impl Studio {
         self.lanes.recentre(self.playhead);
         self.host.playback.seek(f64::from(self.playhead));
         self.request_preview();
+    }
+
+    /// Seeks to the start of the frame `seconds` falls in: what a click, a
+    /// scrub or a drag on the lanes or the monitor's bar asks for, so the
+    /// playhead is always on the frame grid and never between two frames.
+    /// The seeks that name an exact instant - a key, a clip's edge, the end
+    /// of the cut - keep calling `seek`.
+    pub fn seek_frame(&mut self, seconds: f32) {
+        let rate = self.frame_rate();
+        self.seek(crate::panes::timeline::frame_floor(seconds, rate));
     }
 
     // ── the preview axis ──

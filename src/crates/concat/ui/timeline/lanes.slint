@@ -1259,9 +1259,27 @@ export component Lanes inherits Rectangle {
 
     // The ruler's tick ladder, from Rust. Zero means unbound, which draws no
     // ticks rather than dividing by it.
-    property <float> tick: Fmt.tick-interval(root.seconds-per-pixel);
+    property <float> tick: Fmt.tick-interval(root.seconds-per-pixel, root.frame-rate);
     property <float> first-tick: root.tick > 0
         ? Math.ceil(root.scroll-left / root.tick) * root.tick : 0;
+
+    // ── the frame grid ────────────────────────────────────────────────
+    //
+    // Zoomed in far enough that a frame is a cell of its own, as on
+    // Filmora, every frame boundary is drawn: a short mark on the ruler and
+    // a faint rule down the lanes, and the frame the playhead is on is
+    // shaded. Rust holds the playhead to a frame's start (`seek_frame`),
+    // so it moves from line to line and never sits between two.
+    property <float> rate: Math.max(1, root.frame-rate);
+    /// One frame's width at this zoom.
+    property <length> px-per-frame: root.px-per-second / root.rate;
+    /// How many frame rules the grid draws at most; see `frame-grid`.
+    property <int> frame-rules: 256;
+    /// Frames are wide enough to tell apart, and few enough across the
+    /// lanes that the fixed row of rules reaches the far edge.
+    property <bool> frame-grid: root.px-per-frame >= 6px
+        && root.width / root.px-per-frame <= root.frame-rules;
+    property <int> first-frame: Math.max(0, Math.ceil(root.scroll-left * root.rate));
 
     background: Theme.lane;
     clip: true;
@@ -1353,6 +1371,18 @@ export component Lanes inherits Rectangle {
             // half a screen before it, and that half is empty ground.
             visible: root.tick > 0 && self.seconds >= 0
                 && self.x >= 0px && self.x < parent.width;
+        }
+
+        // And one fainter rule per frame, zoomed in; see `frame-grid`.
+        // Fixed count for the reason the ruler's ticks are.
+        for step in root.frame-rules: Rectangle {
+            x: root.at((root.first-frame + step) / root.rate);
+            y: root.ruler-height;
+            width: 1px;
+            height: root.lanes-h;
+            background: Theme.grid;
+            opacity: 0.5;
+            visible: root.frame-grid && self.x < parent.width;
         }
 
         // Declared before the clips, so each clip takes its own press and what
@@ -1653,6 +1683,18 @@ export component Lanes inherits Rectangle {
                 background: Theme.line;
             }
 
+            // Every frame's mark on the ruler's floor, shorter than a tick's,
+            // zoomed in; see `frame-grid`.
+            for step in root.frame-rules: Rectangle {
+                x: root.at((root.first-frame + step) / root.rate);
+                y: parent.height - 4px;
+                width: 1px;
+                height: 4px;
+                background: Theme.line-strong;
+                opacity: 0.7;
+                visible: root.frame-grid && self.x < parent.width;
+            }
+
             // The ruler is the scrub strip: pressed and dragged, the playhead
             // follows. In the lanes a click sends the playhead too, and a
             // drag draws a band instead — the two gestures share one surface
@@ -1729,8 +1771,11 @@ export component Lanes inherits Rectangle {
                 moved => {
                     if (self.pressed) {
                         self.dragging = true;
-                        self.drag-to = Math.max(0,
-                            root.seconds-at(root.at(mark) + self.mouse-x - self.pressed-x));
+                        // On the frame grid, so a key moved here is one the
+                        // playhead can land on.
+                        self.drag-to = Math.max(0, Math.round(
+                            root.seconds-at(root.at(mark) + self.mouse-x - self.pressed-x)
+                                * root.rate) / root.rate);
                     }
                 }
                 pointer-event(event) => {
@@ -1798,6 +1843,18 @@ export component Lanes inherits Rectangle {
             height: root.height;
             background: Theme.accent;
             visible: self.x >= 0px && self.x <= root.width;
+        }
+
+        // The frame the playhead is on, shaded across the lanes while the
+        // frame grid shows: the playhead is its leading edge, and this is
+        // the picture the monitor is showing.
+        if root.frame-grid: Rectangle {
+            x: root.at(root.playhead);
+            y: root.ruler-height;
+            width: root.px-per-frame;
+            height: root.lanes-h;
+            background: Theme.playhead.with-alpha(0.12);
+            visible: self.x + self.width >= 0px && self.x <= root.width;
         }
 
         // ── the playhead ─────────────────────────────────────────────────
