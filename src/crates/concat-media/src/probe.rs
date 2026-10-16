@@ -227,9 +227,11 @@ fn rational(value: ffmpeg::Rational) -> Option<Rational> {
 /// container can say anything - `1/2147483647` is a rate libavformat will
 /// hand out - and a term past the limit overflowed the first frame time
 /// computed on it, where the document's own rates are checked at the door.
+/// A plausible rate spelt in terms that are too big is [`tame`]d first.
 fn pick_rate(average: Option<Rational>, guess: Option<Rational>) -> Option<Rational> {
     let usable = |rate: &Option<Rational>| {
-        rate.filter(|rate| FrameRate::checked(rate.numerator(), rate.denominator()).is_some())
+        rate.map(tame)
+            .filter(|rate| FrameRate::checked(rate.numerator(), rate.denominator()).is_some())
     };
     match (usable(&average), usable(&guess)) {
         (Some(average), Some(base)) => {
@@ -239,6 +241,40 @@ fn pick_rate(average: Option<Rational>, guess: Option<Rational>) -> Option<Ratio
         }
         (Some(average), None) => Some(average),
         (None, base) => base,
+    }
+}
+
+/// A rate in terms the frame arithmetic can count in, or the rate as it was.
+///
+/// A recorder with a fine clock writes a sound rate in enormous terms:
+/// Medal's clips run on a 10 MHz timescale with the odd dropped frame, so
+/// their average is `71570000000/1201661861` - 59.559 fps, but past
+/// [`FrameRate::MAX_TERM`], and the file would not import at all. Such a
+/// rate is rounded to the standard one it is within a hundred-thousandth
+/// of (a whole number, or a thousand-and-first family rate like 59.94),
+/// else to the nearest thousandth of a frame per second: 59.559 is
+/// `59559/1000`. A rate already in small terms is left exactly as it is,
+/// and one past a thousand frames a second stays out of reach.
+fn tame(rate: Rational) -> Rational {
+    let fps = rate.as_f64();
+    let small = FrameRate::checked(rate.numerator(), rate.denominator()).is_some();
+    if small || !(fps.is_finite() && fps > 0.0 && fps <= 1000.0) {
+        return rate;
+    }
+    let near = |exact: f64| ((exact - fps) / fps).abs() <= 1e-5;
+    let whole = fps.round();
+    if whole >= 1.0 && near(whole) {
+        return Rational::from_int(whole as i64);
+    }
+    let ntsc = (fps * 1.001).round();
+    if ntsc >= 1.0 && near(ntsc * 1000.0 / 1001.0) {
+        return Rational::new(ntsc as i64 * 1000, 1001);
+    }
+    let thousandths = (fps * 1000.0).round() as i64;
+    if thousandths > 0 {
+        Rational::new(thousandths, 1000)
+    } else {
+        rate
     }
 }
 
@@ -295,6 +331,33 @@ mod tests {
         assert_eq!(pick_rate(absurd, absurd), None);
         let negative = Some(Rational::new(-25, 1));
         assert_eq!(pick_rate(negative, thirty), thirty);
+    }
+
+    /// A Medal clip: 60 fps on a 10 MHz timescale with 53 dropped frames.
+    /// Both of its rates are sound but spelt past the frame arithmetic's
+    /// terms, and it imports instead of being refused.
+    #[test]
+    fn a_rate_in_enormous_terms_is_rounded_not_refused() {
+        let average = Rational::new(71_570_000_000, 1_201_661_861);
+        let base = Rational::new(10_000_000, 166_666);
+        assert_eq!(tame(average), Rational::new(59_559, 1000));
+        assert_eq!(tame(base), Rational::from_int(60));
+        assert_eq!(
+            pick_rate(Some(average), Some(base)),
+            Some(Rational::from_int(60))
+        );
+        // The timescale itself as the base rate is no rate at all.
+        let timescale = Some(Rational::from_int(10_000_000));
+        assert_eq!(
+            pick_rate(Some(average), timescale),
+            Some(Rational::new(59_559, 1000))
+        );
+        // The thousand-and-first family is kept exact.
+        let ntsc = Rational::new(60_000_000_000, 1_001_000_007);
+        assert_eq!(tame(ntsc), Rational::new(60_000, 1001));
+        // A rate already in small terms is left alone.
+        let skewed = Rational::new(2700, 89);
+        assert_eq!(tame(skewed), skewed);
     }
 
     #[test]
