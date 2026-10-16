@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Jareer and Concat contributors
 
 import { Wave } from "../primitives/wave.slint";
+import { I18n } from "../i18n.slint";
 import { Theme } from "../theme/theme.slint";
 import { Fmt, Payload } from "../util.slint";
 import { Glyph, Icon } from "../icons.slint";
@@ -1069,6 +1070,9 @@ export component Lanes inherits Rectangle {
     in property <bool> finger: false;
 
     callback scrubbed(seconds: float);
+    /// The playhead's knob clicked without being dragged: cut at the
+    /// playhead, as the tray's Split at playhead does.
+    callback playhead-split();
     /// A ruler diamond dragged from one instant to another.
     callback key-mark-moved(from: float, to: float);
     /// The preview axis: the pointer is over the lanes at this instant,
@@ -1825,6 +1829,83 @@ export component Lanes inherits Rectangle {
                 }
             }
         }
+
+        // ── the playhead's knob ──────────────────────────────────────────
+        //
+        // A handle halfway down the playhead, as on Filmora: something to
+        // take hold of, where the 1px line is not. Dragged, it scrubs, as
+        // the ruler does; clicked without travelling, it cuts at the
+        // playhead - the tray's Split at playhead, selection rules and all.
+        // Not under a finger, where the playhead stays put and the lanes
+        // slide beneath it.
+        if !root.finger: TouchArea {
+            property <length> size: 20px;
+            /// Where the press landed, in the lanes' own coordinates.
+            property <length> press-x;
+            property <bool> dragging;
+
+            x: root.at(root.playhead) - self.size / 2;
+            y: root.ruler-height + (root.lanes-h - self.size) / 2;
+            width: self.size;
+            height: self.size;
+            visible: root.at(root.playhead) >= 0px && root.at(root.playhead) <= root.width;
+            mouse-cursor: self.dragging ? MouseCursor.ew-resize : MouseCursor.pointer;
+            accessible-role: button;
+            accessible-label: I18n.t1("tray.splitAtPlayhead", @keys(Control + B).to-string());
+
+            Rectangle {
+                x: 0;
+                y: 0;
+                width: parent.width;
+                height: parent.height;
+                border-radius: self.width / 2;
+                border-width: 1px;
+                border-color: Theme.ruler;
+                background: parent.has-hover || parent.pressed
+                    ? Theme.playhead.brighter(0.2) : Theme.playhead;
+
+                Icon {
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                    glyph: Glyph.scissors;
+                    size: 12px;
+                    tint: Theme.ruler;
+                    weight: 2.4;
+                }
+            }
+
+            // The pointer is read in the lanes' coordinates, before the scrub
+            // moves the knob and with it the frame `mouse-x` is measured in.
+            pointer-event(event) => {
+                if (event.kind == PointerEventKind.down && event.button == PointerEventButton.left) {
+                    self.press-x = self.absolute-position.x - root.absolute-position.x + self.mouse-x;
+                    self.dragging = false;
+                } else if (event.kind == PointerEventKind.up && event.button == PointerEventButton.left) {
+                    if (!self.dragging) {
+                        root.playhead-split();
+                    }
+                    self.dragging = false;
+                    root.scrubbing = false;
+                } else if (event.kind == PointerEventKind.cancel) {
+                    self.dragging = false;
+                    root.scrubbing = false;
+                }
+            }
+            // Past a few pixels it is a drag, not a click, and the edge of
+            // the lanes scrolls them as a ruler scrub does.
+            moved => {
+                let x = self.absolute-position.x - root.absolute-position.x + self.mouse-x;
+                if (!self.dragging && Math.abs(x - self.press-x) > 3px) {
+                    self.dragging = true;
+                    root.scrubbing = true;
+                }
+                if (self.dragging) {
+                    root.pointer-x = x;
+                    root.scrubbed(Math.max(0, root.seconds-at(x)));
+                }
+            }
+        }
+
         // Hand tool: left-drag pans time. Sits at the top of the wheel's
         // children so it takes the drag before any clip or the band does.
         if root.pan-mode: pan := TouchArea {

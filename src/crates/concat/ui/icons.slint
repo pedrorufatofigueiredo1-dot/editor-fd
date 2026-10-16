@@ -106,6 +106,8 @@ export enum Glyph {
     redo,
     pointer,
     razor,
+    /// plain scissors, without the razor's dashed line: the playhead's knob
+    scissors,
     split,
     merge,
     trash,
@@ -563,6 +565,13 @@ export component Icon inherits Rectangle {
         size: root.size; tint: root.tint; weight: root.weight;
         commands: "M15 14l5-5-5-5 M20 9H9.5A5.5 5.5 0 0 0 4 14.5A5.5 5.5 0 0 0 9.5"
             + " 20H13";
+    }
+
+    // lucide/scissors
+    if root.glyph == Glyph.scissors: Stroked {
+        size: root.size; tint: root.tint; weight: root.weight;
+        commands: "M3 6a3 3 0 1 0 6 0a3 3 0 1 0 -6 0 M8.12 8.12 12 12 M20 4 8.12 15.88"
+            + " M3 18a3 3 0 1 0 6 0a3 3 0 1 0 -6 0 M14.8 14.8 20 20";
     }
 
     // lucide/square-split-horizontal
