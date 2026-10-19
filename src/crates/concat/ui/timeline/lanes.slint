@@ -6,7 +6,7 @@ import { I18n } from "../i18n.slint";
 import { Theme } from "../theme/theme.slint";
 import { Fmt, Payload } from "../util.slint";
 import { Glyph, Icon } from "../icons.slint";
-import { ClipData, ClipKind, DropData, TimelineTool, TrackData } from "model.slint";
+import { ClipData, ClipKind, DropData, GapData, TimelineTool, TrackData } from "model.slint";
 import { ContextMenu, MenuItemData } from "../primitives/context-menu.slint";
 
 // The lanes: the ruler, the banded track stack, the clips on it, the playhead
@@ -1150,6 +1150,12 @@ export component Lanes inherits Rectangle {
     callback band-selected(from-seconds: float, to-seconds: float,
         from-y: length, to-y: length, additive: bool);
     callback scrolled(seconds: float);
+    /// A click on an empty lane, after the band it closed: at this instant
+    /// and this far down the stack (scroll included, as the band's). Rust
+    /// picks the gap there, if there is one, and publishes it as `gap`.
+    callback gap-pressed(seconds: float, y: length);
+    /// The picked empty stretch of lane; see GapData.
+    in property <GapData> gap;
     callback track-scrolled(pixels: length);
     callback zoomed(factor: float, anchor-seconds: float);
 
@@ -1385,6 +1391,25 @@ export component Lanes inherits Rectangle {
             visible: root.frame-grid && self.x < parent.width;
         }
 
+        // ── the picked gap ───────────────────────────────────────────────
+        //
+        // The empty stretch a click picked, drawn as a target in its lane:
+        // the accent, as the band and a selected clip are outlined. Alpha in
+        // the paints and not `opacity`, for the reason the drop ghost gives:
+        // a long gap is a wide element.
+        if root.gap.active && root.gap.row < root.tracks.length: Rectangle {
+            x: root.at(root.gap.start);
+            y: root.row-y(root.gap.row) + 4px;
+            width: Math.max(2px, root.gap.duration * root.px-per-second);
+            height: Math.max(2px, root.tracks[root.gap.row].height - 10px);
+            border-radius: Theme.r-sm;
+            background: Theme.accent.with-alpha(0.18);
+            border-width: 2px;
+            border-color: Theme.accent.with-alpha(0.85);
+            visible: self.x + self.width > 0 && self.x < root.width
+                && self.y + self.height > root.ruler-height && self.y < root.height;
+        }
+
         // Declared before the clips, so each clip takes its own press and what
         // is left is the empty lane — which starts a band.
         band := TouchArea {
@@ -1432,6 +1457,15 @@ export component Lanes inherits Rectangle {
                             root.stack-y(Math.min(self.from-y, self.to-y)),
                             root.stack-y(Math.max(self.from-y, self.to-y)),
                             self.additive);
+                        // And a plain click picks the gap it landed in, as
+                        // on Filmora, once the band has let go of whatever
+                        // was selected before.
+                        if (event.kind == PointerEventKind.up && !self.additive
+                            && Math.abs(self.to-x - self.from-x) <= 4px
+                            && Math.abs(self.to-y - self.from-y) <= 4px) {
+                            root.gap-pressed(root.seconds-at(self.from-x),
+                                root.stack-y(self.from-y));
+                        }
                     } else if (root.finger && root.finger-axis == 0
                         && event.kind == PointerEventKind.up) {
                         // A tap on an empty lane: the playhead goes there,

@@ -163,6 +163,8 @@ export component TimelineTray inherits Rectangle {
     in property <int> selected-count;
     /// A transition is selected on its own: the trash takes it off.
     in property <bool> transition-selected;
+    /// An empty stretch of lane is picked; Delete closes it.
+    in property <bool> gap-selected;
     /// Whether the history has a step that way. Rust's answer, read from
     /// the editor after every change, so the buttons never guess.
     in property <bool> can-undo;
@@ -290,7 +292,7 @@ export component TimelineTray inherits Rectangle {
             label: I18n.t("tray.deleteSelected");
             danger: true;
             icon-size: 16px;
-            enabled: root.selected-count > 0 || root.transition-selected;
+            enabled: root.selected-count > 0 || root.transition-selected || root.gap-selected;
             clicked => { root.delete-selected(); }
         }
 

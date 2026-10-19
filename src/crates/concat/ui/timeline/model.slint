@@ -153,6 +153,19 @@ export struct DropData {
     row: int,
 }
 
+/// An empty stretch of one lane, picked on the timeline as Filmora picks
+/// one: from where the clip before it ends (or the start of the cut) to
+/// where the next clip begins. Delete closes it, pulling the rest of the
+/// lane back. Published by Rust, which lets it go as soon as an edit fills
+/// it or anything else is selected; ground with no clip after it is never
+/// a gap.
+export struct GapData {
+    active: bool,
+    start: float,
+    duration: float,
+    row: int,
+}
+
 /// Which axis the alignment segmented control is on. Mirrors TextAlign.
 export enum TextAlignment { left, center, right }
 

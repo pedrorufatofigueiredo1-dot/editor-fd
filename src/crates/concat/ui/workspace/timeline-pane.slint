@@ -10,7 +10,7 @@ import { ContextMenu, MenuItemData, MenuMetrics, MenuRow } from "../primitives/c
 import { HairlineSplitter } from "splitter.slint";
 import { ThinHScrollbar, ThinScrollbar } from "../primitives/scrollbar.slint";
 import {
-    ClipData, DropData, TimelineTabData, TimelineTool, TrackData, TrackSize,
+    ClipData, DropData, GapData, TimelineTabData, TimelineTool, TrackData, TrackSize,
 } from "../timeline/model.slint";
 import { TimelineTabs } from "../timeline/tabs.slint";
 import { TimelineTray } from "../timeline/tray.slint";
@@ -114,6 +114,10 @@ export component TimelinePane inherits Rectangle {
     callback band-selected(from-seconds: float, to-seconds: float,
         from-y: length, to-y: length, additive: bool);
     callback scrolled(seconds: float);
+    /// The picked empty stretch of lane, and the click that picks one. See
+    /// GapData.
+    in property <GapData> gap;
+    callback gap-pressed(seconds: float, y: length);
 
     /// A library card dragged over the lanes, and let go of. See DropData.
     in property <DropData> drop;
@@ -315,6 +319,7 @@ export component TimelinePane inherits Rectangle {
             preview-axis: root.preview-axis;
             selected-count: root.selected-count;
             transition-selected: root.transition-selected;
+            gap-selected: root.gap.active;
             can-undo: root.can-undo;
             can-redo: root.can-redo;
             merge-blocked-because: root.merge-blocked-because;
@@ -441,6 +446,8 @@ export component TimelinePane inherits Rectangle {
                 band-selected(a, b, c, d, additive) => {
                     root.band-selected(a, b, c, d, additive);
                 }
+                gap: root.gap;
+                gap-pressed(seconds, y) => { root.gap-pressed(seconds, y); }
                 scrolled(seconds) => { root.scrolled(seconds); }
 
                 drop: root.drop;

@@ -972,6 +972,9 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
             // title's text box, and it ends here, with the band it drew -
             // usually an empty one that clears the selection.
             state.flush_commit();
+            // A band picks clips, not ground: a gap picked before goes. A
+            // plain click picks a new one just after, in `on_gap_pressed`.
+            state.gap = None;
             let (from_row, to_row) = (state.row_at(from_y), state.row_at(to_y));
             let caught: Vec<String> = state
                 .timeline()
@@ -999,6 +1002,9 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
             }
         }
     ));
+    editor.on_gap_pressed(on_lanes!(|state, seconds: f32, y: f32| {
+        state.gap_pressed(seconds, y);
+    }));
 
     // ── the inspector ──
     // The keyframe cluster. Its own global, so a row deep in a panel does

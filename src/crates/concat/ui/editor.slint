@@ -13,7 +13,7 @@ import { DockDivider, DockSide, SeatBox } from "dock.slint";
 import { PaneKind } from "workspace/pane-switcher.slint";
 import { MenuItemData } from "primitives/context-menu.slint";
 import {
-    ClipData, ClipField, ClipTextField, DropData, SelectedClipData, SelectedTransitionData,
+    ClipData, ClipField, ClipTextField, DropData, GapData, SelectedClipData, SelectedTransitionData,
     StageGuideData, StageItemData, TimelineTabData, TimelineTool, TrackData,
     TrackSize,
 } from "timeline/model.slint";
@@ -399,6 +399,12 @@ export global Editor {
     /// A library card dragged onto the lanes. See DropData in the timeline's
     /// model: the ghost is Rust's answer to the hover, not the panel's guess.
     in-out property <DropData> drop;
+    /// The empty stretch of lane picked by a click; see GapData. Delete
+    /// closes it.
+    in-out property <GapData> gap;
+    /// A click on an empty lane, at this instant and this height down the
+    /// stack: Rust picks the gap there, if there is one.
+    callback gap-pressed(seconds: float, y: length);
     callback drag-hovered(payload: string, seconds: float, y: length);
     callback dropped(payload: string, seconds: float, y: length);
     callback track-flag-changed(index: int, visible: bool, muted: bool, locked: bool);

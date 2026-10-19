@@ -41,6 +41,26 @@ pub fn frame_floor(seconds: f32, rate: f32) -> f32 {
     (frame / rate) as f32
 }
 
+/// The empty stretch of one lane that `at` falls in, given the lane's clips
+/// as (start, end) spans: from where the last clip before it ends - or the
+/// start of the cut - to where the next one begins. None over a clip, and
+/// None past the last clip: ground with nothing after it is not a gap there
+/// is anything to close. Nor is a seam two clips meet at.
+pub fn gap_around(spans: impl IntoIterator<Item = (f64, f64)>, at: f64) -> Option<(f64, f64)> {
+    let (mut before, mut after) = (0.0_f64, f64::INFINITY);
+    for (start, end) in spans {
+        if start <= at && at < end {
+            return None;
+        }
+        if end <= at {
+            before = before.max(end);
+        } else {
+            after = after.min(start);
+        }
+    }
+    (after.is_finite() && after - before > 1e-4).then_some((before, after))
+}
+
 /// What the window knows about a lane that the document does not: whether
 /// it is locked, and how tall to draw it.
 #[derive(Clone, Copy)]
@@ -351,6 +371,30 @@ mod tests {
         assert_eq!(view.scroll_left, -4.0);
         view.scrolled(-4.0);
         assert_eq!(view.scroll_left, 0.0);
+    }
+
+    /// A click between two clips picks the ground between them; before the
+    /// first, the ground from zero; over a clip, after the last, or on an
+    /// empty lane, nothing.
+    #[test]
+    fn a_gap_is_empty_ground_with_a_clip_after_it() {
+        let lane = [(2.0, 5.0), (8.0, 10.0), (10.0, 12.0)];
+        assert_eq!(gap_around(lane, 6.5), Some((5.0, 8.0)));
+        assert_eq!(gap_around(lane, 5.0), Some((5.0, 8.0)));
+        assert_eq!(gap_around(lane, 1.0), Some((0.0, 2.0)));
+        // Over a clip, and on the seam of two that touch.
+        assert_eq!(gap_around(lane, 3.0), None);
+        assert_eq!(gap_around(lane, 10.0), None);
+        // Past the last clip: nothing after it to pull back.
+        assert_eq!(gap_around(lane, 20.0), None);
+        assert_eq!(gap_around(std::iter::empty(), 1.0), None);
+        // The order the clips come in does not matter.
+        assert_eq!(
+            gap_around([(10.0, 12.0), (2.0, 5.0), (8.0, 10.0)], 6.0),
+            Some((5.0, 8.0))
+        );
+        // A clip at zero leaves no gap before it.
+        assert_eq!(gap_around([(0.0, 3.0), (4.0, 6.0)], 3.5), Some((3.0, 4.0)));
     }
 
     /// Anywhere inside a frame is that frame's start; a frame's own start

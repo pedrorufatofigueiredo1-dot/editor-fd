@@ -539,6 +539,15 @@ pub struct DropPlan {
     pub row: i32,
 }
 
+/// An empty stretch of one lane, picked by a click as Filmora picks one;
+/// see `GapData` in the timeline's model. Delete closes it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Gap {
+    pub track_id: String,
+    pub start: f64,
+    pub end: f64,
+}
+
 /// Every model the window is handed, kept for its lifetime rather than
 /// rebuilt: a new model is a *reset*, and Slint answers a reset by dropping
 /// every instance behind it - mid-gesture, that includes the TouchArea
@@ -899,6 +908,9 @@ pub struct Studio {
     #[allow(clippy::type_complexity)]
     pub title_blocks: HashMap<String, ((u32, u32), (i32, i32))>,
     pub drop: Option<DropPlan>,
+    /// The gap a click on an empty lane picked, as it was picked; see
+    /// `picked_gap` for whether it still stands.
+    pub gap: Option<Gap>,
     pub project_sheet: crate::panes::project::ProjectPane,
     pub captions: crate::panes::captions::CaptionsPane,
     pub speech: crate::panes::speech::SpeechPane,
@@ -2054,6 +2066,7 @@ impl Studio {
             last_commit: None,
             title_blocks: HashMap::new(),
             drop: None,
+            gap: None,
             project_sheet: crate::panes::project::ProjectPane::default(),
             captions: crate::panes::captions::CaptionsPane::default(),
             speech: crate::panes::speech::SpeechPane::default(),
@@ -6583,11 +6596,15 @@ impl Studio {
     }
 
     /// Delete: the selection goes, and the hole stays unless the timeline
-    /// is magnetic.
+    /// is magnetic. A picked gap is closed.
     pub fn delete_selected(&mut self) {
         // A selected transition goes on its own, leaving a plain cut.
         if self.selected_transition().is_some() {
             self.remove_transition();
+            return;
+        }
+        if let Some(gap) = self.picked_gap() {
+            self.close_gap(&gap);
             return;
         }
         let magnetic = self.prefs.magnetic;
@@ -6602,7 +6619,82 @@ impl Studio {
             self.remove_transition();
             return;
         }
+        if let Some(gap) = self.picked_gap() {
+            self.close_gap(&gap);
+            return;
+        }
         self.remove_selected(true);
+    }
+
+    /// A click on an empty lane, at `seconds` and `y` down the stack: picks
+    /// the gap there - from the clip before (or the start of the cut) to
+    /// the clip after - and lets go of anything picked before. Nothing is
+    /// picked over a clip, past a lane's last clip, or on a locked lane.
+    pub fn gap_pressed(&mut self, seconds: f32, y: f32) {
+        self.gap = None;
+        let Some(track) = self.row_track(self.row_at(y)) else {
+            return;
+        };
+        let track_id = track.id.clone();
+        if self.locked(&track_id) {
+            return;
+        }
+        let spans = self.lane_spans(&track_id);
+        if let Some((start, end)) = crate::panes::timeline::gap_around(spans, f64::from(seconds)) {
+            self.selection.clear();
+            self.transition_selected = None;
+            self.gap = Some(Gap {
+                track_id,
+                start,
+                end,
+            });
+        }
+    }
+
+    /// The (start, end) of every clip on one lane.
+    fn lane_spans(&self, track_id: &str) -> Vec<(f64, f64)> {
+        self.timeline()
+            .clips
+            .iter()
+            .filter(|clip| clip.track_id == track_id)
+            .map(|clip| (clip.start, clip.start + clip.duration))
+            .collect()
+    }
+
+    /// The picked gap, if it still stands: nothing else is selected, and
+    /// its lane still has exactly that empty stretch with a clip after it.
+    /// An edit since - an undo, a clip dropped into it, its lane removed -
+    /// lets it go without anyone having to say so.
+    pub fn picked_gap(&self) -> Option<Gap> {
+        let gap = self.gap.as_ref()?;
+        if !self.selection.is_empty() || self.transition_selected.is_some() {
+            return None;
+        }
+        let spans = self.lane_spans(&gap.track_id);
+        let (start, end) = crate::panes::timeline::gap_around(spans, (gap.start + gap.end) / 2.0)?;
+        ((start - gap.start).abs() < 1e-6 && (end - gap.end).abs() < 1e-6).then(|| gap.clone())
+    }
+
+    /// Closes a gap: every clip on its lane from the gap's end on moves
+    /// back by the gap's length, in one edit, so one undo puts it back.
+    /// The other lanes stay where they are, as a ripple delete leaves them.
+    fn close_gap(&mut self, gap: &Gap) {
+        let by = gap.end - gap.start;
+        let moves: Vec<ClipMove> = self
+            .timeline()
+            .clips
+            .iter()
+            .filter(|clip| clip.track_id == gap.track_id && clip.start >= gap.end - 1e-6)
+            .map(|clip| ClipMove {
+                clip_id: clip.id.clone(),
+                start: (clip.start - by).max(0.0),
+                track_id: clip.track_id.clone(),
+            })
+            .collect();
+        self.gap = None;
+        if !moves.is_empty() {
+            self.apply(Command::MoveClips { moves });
+        }
     }
 
     fn remove_selected(&mut self, ripple: bool) {
@@ -7862,6 +7954,15 @@ impl Studio {
                 row: plan.row,
             },
             None => DropData::default(),
+        });
+        editor.set_gap(match self.picked_gap() {
+            Some(gap) => GapData {
+                active: true,
+                start: gap.start as f32,
+                duration: (gap.end - gap.start) as f32,
+                row: self.row_of(&gap.track_id),
+            },
+            None => GapData::default(),
         });
 
         editor.set_selected_clip(self.selected());
@@ -10241,6 +10342,7 @@ impl Studio {
                 self.flush_commit();
                 self.selection.clear();
                 self.transition_selected = None;
+                self.gap = None;
             }
             // ⇧⌫, from the key table; plain ⌫ comes in as its own callback.
             "ripple-delete" => self.ripple_delete_selected(),
