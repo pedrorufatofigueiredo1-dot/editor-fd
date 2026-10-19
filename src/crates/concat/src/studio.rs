@@ -537,6 +537,10 @@ pub struct DropPlan {
     pub start: f32,
     pub duration: f32,
     pub row: i32,
+    /// A picture effect let go over a clip goes on that clip's chain, as on
+    /// Filmora, instead of becoming a layer: the clip it lands on, whose
+    /// span the ghost then covers. None for everything else.
+    pub target: Option<String>,
 }
 
 /// An empty stretch of one lane, picked by a click as Filmora picks one;
@@ -3324,6 +3328,7 @@ impl Studio {
                     }
                     .max(MIN_DURATION),
                     row: 0,
+                    target: None,
                 })
             }
             // A title: the preset's id rides where a file's media id would,
@@ -3335,6 +3340,7 @@ impl Studio {
                 start: 0.0,
                 duration: LAYER_DURATION,
                 row: 0,
+                target: None,
             }),
             // A figure from the Stickers page: the shape's name rides
             // where a file's media id would, and the label is what the
@@ -3346,16 +3352,20 @@ impl Studio {
                 start: 0.0,
                 duration: LAYER_DURATION,
                 row: 0,
+                target: None,
             }),
             // A look dragged from the Filters page: a layer over a span.
-            // The package id rides in `media`, there being no file.
-            "filter" => Some(DropPlan {
+            // The package id rides in `media`, there being no file. A
+            // picture effect from the Effects page is the same layer, unless
+            // it is let go over a clip; see `plan`.
+            "filter" | "effect" => Some(DropPlan {
                 kind: ClipKind::Filter,
                 label: label.to_owned(),
                 media: id.to_owned(),
                 start: 0.0,
                 duration: LAYER_DURATION,
                 row: 0,
+                target: None,
             }),
             _ => None,
         }
@@ -3378,11 +3388,51 @@ impl Studio {
         plan.start = self
             .snapped(seconds.max(0.0), 8.0 * self.lanes.seconds_per_pixel, "")
             .max(0.0);
+        // An effect let go over a clip goes on it; see DropPlan::target. The
+        // ghost covers the clip, which is the answer to "where will it go".
+        if payload.starts_with("effect:")
+            && let Some(clip) = self.effect_target(plan.row, seconds)
+        {
+            plan.start = clip.start as f32;
+            plan.duration = clip.duration as f32;
+            plan.target = Some(clip.id.clone());
+        }
         Some(plan)
+    }
+
+    /// The clip on lane `row` at `seconds` that a picture effect can go on:
+    /// a picture, a title, a shape or a layer.
+    fn effect_target(&self, row: i32, seconds: f32) -> Option<&Clip> {
+        let track = self.row_track(row)?;
+        let at = f64::from(seconds);
+        self.timeline()
+            .clips
+            .iter()
+            .find(|clip| {
+                clip.track_id == track.id
+                    && clip.start <= at
+                    && at < clip.start + clip.duration
+                    && (clip.kind.is_visual()
+                        || matches!(
+                            clip.kind,
+                            model::ClipKind::Text | model::ClipKind::Shape | model::ClipKind::Layer
+                        ))
+            })
+            .map(|clip| clip.as_ref())
     }
 
     /// Commits a plan that has a lane, and selects what it made.
     pub fn place(&mut self, plan: &DropPlan) {
+        // An effect dropped on a clip: onto its chain, the way a click on
+        // the card puts it on the selected clip, and the inspector opens on
+        // it there.
+        if let Some(target) = &plan.target {
+            self.flush_commit();
+            self.selection = vec![target.clone()];
+            self.transition_selected = None;
+            self.apply_catalogue(&plan.media, true);
+            return;
+        }
         let Some(track_id) = self.row_track(plan.row).map(|track| track.id.clone()) else {
             return;
         };
@@ -3583,9 +3633,14 @@ impl Studio {
         let Some(clip) = self.clip(&clip_id).cloned() else {
             return;
         };
+        // A layer takes picture effects too: they join the chain it lays
+        // over everything beneath it.
         if video
             && !(clip.kind.is_visual()
-                || matches!(clip.kind, model::ClipKind::Text | model::ClipKind::Shape))
+                || matches!(
+                    clip.kind,
+                    model::ClipKind::Text | model::ClipKind::Shape | model::ClipKind::Layer
+                ))
         {
             self.notify(&t("studio.selectVideoImageText"), true);
             return;

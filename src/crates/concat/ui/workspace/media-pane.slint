@@ -2442,6 +2442,12 @@ export component MediaPane inherits Rectangle {
                         // Effects apply directly on single-click to the selected clip —
                         // auditions:false means click = apply, no monitor overlay confusion.
                         auditions: false;
+                        // And a picture effect dragged onto the lanes goes on
+                        // the clip it is let go over, as on Filmora; on empty
+                        // ground it is a layer of its own, as a filter is,
+                        // treating every track beneath it - one effect over
+                        // the whole cut without putting it on each clip.
+                        payload-kind: root.audio-shelf ? "" : "effect";
                         applied(id, label) => {
                             if (root.audio-shelf) {
                                 root.apply-audio(id);

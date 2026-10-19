@@ -215,31 +215,35 @@ export component ConfigPane inherits Rectangle {
     // picture - its placement, its speed, its colour; Audio
     // the level, the fades and the voice and room chain; Effects the two
     // shelves and the picture's chain. A still loses Audio, a sound clip
-    // keeps Audio alone, and a title gets Text alone: its look is its
+    // keeps Audio alone, and a title gets Text and Effects: its look is its
     // typography, stroke and box, all on the Text tab, and Video or Audio
     // on a title would be panels that can only say "nothing here".
+    //
+    // Every kind the library can put an effect on shows the chain on an
+    // Effects tab - a title, a shape and a layer included - since an effect
+    // that went on with nowhere to see it could never come off again.
     property <bool> is-text: root.selected.kind == ClipKind.text;
     property <bool> is-image: root.selected.kind == ClipKind.image;
-    /// A shape gets one tab, Vector Image, with the placement panel
-    /// alone: it has no sound, no rate, no colour to adjust and no chain
-    /// of effects - a figure is its fill and its outline, nothing more.
+    /// A shape gets Vector Image, with the placement panel alone - it has no
+    /// sound, no rate and no colour to adjust - and Effects.
     property <bool> is-shape: root.selected.kind == ClipKind.shape;
     property <bool> is-audio: root.selected.kind == ClipKind.audio;
-    /// A filter layer gets its own lone tab for the same reason a title does:
+    /// A layer gets Layer - its strength and ramps - and Effects, its chain:
     /// it has no transform, no gain and no rate, and every other tab could
-    /// only say "nothing here".
+    /// only say "nothing here". A filter dragged from the Filters page and
+    /// an effect dragged from the Effects page both make one.
     property <bool> is-layer: root.selected.kind == ClipKind.filter;
-    property <[string]> tabs: root.is-text ? ["Text"]
-        : root.is-layer ? ["Filter"]
-        : root.is-shape ? ["Video"]
+    property <[string]> tabs: root.is-text ? ["Text", "Effects"]
+        : root.is-layer ? ["Filter", "Effects"]
+        : root.is-shape ? ["Video", "Effects"]
         : root.is-image ? ["Video", "Effects"]
         : root.is-audio ? ["Audio"]
         : ["Video", "Audio", "Effects"];
     /// The same tabs in the interface's language. `tabs` stays English,
     /// because the panels are picked by comparing against it.
-    property <[string]> tabs-shown: root.is-text ? [I18n.t("common.text")]
-        : root.is-layer ? [I18n.t("configPane.filter")]
-        : root.is-shape ? [I18n.t("configPane.vectorImage")]
+    property <[string]> tabs-shown: root.is-text ? [I18n.t("common.text"), I18n.t("common.effects")]
+        : root.is-layer ? [I18n.t("common.layer"), I18n.t("common.effects")]
+        : root.is-shape ? [I18n.t("configPane.vectorImage"), I18n.t("common.effects")]
         : root.is-image ? [I18n.t("common.video"), I18n.t("common.effects")]
         : root.is-audio ? [I18n.t("common.audio")]
         : [I18n.t("common.video"), I18n.t("common.audio"), I18n.t("common.effects")];
