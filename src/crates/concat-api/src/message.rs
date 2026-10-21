@@ -56,6 +56,13 @@ pub enum Request {
     #[serde(rename = "version")]
     Version,
 
+    /// What the window this API is embedded in has on screen: its project,
+    /// the playhead and the selection, so a caller can edit "here" and
+    /// "this clip". `null` with no window, or no project open in it. Every
+    /// method on that project's folder then edits the one on screen, live.
+    #[serde(rename = "window.get")]
+    WindowGet,
+
     /// Creates a project folder under `location`, named `name`, and opens
     /// it. Refuses a folder that already holds a project.
     #[serde(rename = "project.create")]
@@ -236,6 +243,51 @@ pub enum Request {
     },
 }
 
+impl Request {
+    /// The project folder the request works on, for the methods that name
+    /// one. A probe's `path` is a media file, not a project.
+    pub fn project(&self) -> Option<&str> {
+        match self {
+            Request::ProjectOpen { path }
+            | Request::ProjectClose { path, .. }
+            | Request::ProjectGet { path }
+            | Request::ProjectDocument { path }
+            | Request::ProjectSave { path, .. }
+            | Request::ProjectSetVideo { path, .. }
+            | Request::EditApply { path, .. }
+            | Request::EditUndo { path }
+            | Request::EditRedo { path }
+            | Request::MediaImport { path, .. }
+            | Request::TemplateSave { path, .. }
+            | Request::ExportRun { path, .. }
+            | Request::PreviewFrame { path, .. } => Some(path),
+            Request::Version
+            | Request::WindowGet
+            | Request::ProjectCreate { .. }
+            | Request::ProjectList
+            | Request::MediaProbe { .. }
+            | Request::CatalogueList { .. }
+            | Request::TemplateList
+            | Request::TemplateInstantiate { .. }
+            | Request::ExportCancel { .. } => None,
+        }
+    }
+}
+
+/// What the window has on screen, for [`Request::WindowGet`].
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowStatus {
+    /// The project folder: the `path` every other method takes.
+    pub path: String,
+    /// The project's name.
+    pub name: String,
+    /// The playhead, in timeline seconds.
+    pub playhead: f64,
+    /// The ids of the clips selected on the timeline.
+    pub selection: Vec<String>,
+}
+
 /// One template slot and the file that takes it.
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -299,6 +351,8 @@ pub struct ExportSpec {
 pub enum Reply {
     /// [`Request::Version`].
     Version(VersionInfo),
+    /// [`Request::WindowGet`].
+    Window(Option<WindowStatus>),
     /// The project after a change, or as it stands.
     View(Box<EditorView>),
     /// [`Request::ProjectList`].

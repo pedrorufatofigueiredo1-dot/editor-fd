@@ -295,6 +295,18 @@ impl Session {
         self.editor.to_document(&self.settings)
     }
 
+    /// The edit as it stands, without its history: something to render or
+    /// export on another thread while this session goes on being edited.
+    pub fn snapshot(&self) -> Option<Session> {
+        Some(Session {
+            path: self.path.clone(),
+            settings: self.settings.clone(),
+            editor: Editor::from_document(&self.document())?,
+            upgraded: Vec::new(),
+            retired: concat_project::RetiredFields::default(),
+        })
+    }
+
     /// The active timeline flattened for rendering. This is what export and
     /// preview consume: the engine flattens its own session, so the pixels
     /// rendered are the model's, never a copy of it.

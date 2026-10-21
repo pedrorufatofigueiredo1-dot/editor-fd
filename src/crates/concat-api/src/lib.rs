@@ -52,8 +52,30 @@ use concat_project::model::VideoSettings;
 
 pub use message::{
     API_VERSION, ApiError, Dirs, Done, ErrorCode, Event, ExportSpec, Fill, PackageInfo, ParamInfo,
-    Picture, Reply, Request, Response, Started, VersionInfo, Written,
+    Picture, Reply, Request, Response, Started, VersionInfo, WindowStatus, Written,
 };
+
+/// Work for the window's thread on the session it has on screen. Returns
+/// whether it changed the edit, so the window redraws and saves.
+pub type WindowWork = Box<dyn FnOnce(&mut Session) -> bool + Send>;
+
+/// The window an API is embedded in, so a caller edits the project on
+/// screen as the person at the window watches: the window's session is
+/// edited on the window's thread, into its undo history, and redrawn.
+pub trait Window: Send + Sync {
+    /// Runs `work` on the window's session when its project is `path`, and
+    /// waits for it. False when the window has another project, or none,
+    /// or did not answer.
+    fn edit(&self, path: &str, work: WindowWork) -> bool;
+    /// What the window has on screen; `None` with no project open.
+    fn status(&self) -> Option<WindowStatus>;
+}
+
+/// Whether two spellings of a project folder are the same folder, the way
+/// the API and the register of open projects compare them.
+pub fn same_project(a: &str, b: &str) -> bool {
+    key_of(a) == key_of(b)
+}
 
 /// The export sheet's middle quality, and what an export gets when the
 /// caller says nothing.
@@ -162,6 +184,8 @@ pub struct Api {
     jobs: Jobs,
     /// [`VersionInfo::capabilities`], in the order they were added.
     capabilities: Vec<String>,
+    /// The window this API is embedded in, if it is.
+    window: Option<Arc<dyn Window>>,
 }
 
 impl Api {
@@ -186,6 +210,7 @@ impl Api {
             jobs: Jobs::default(),
             dirs,
             capabilities: CAPABILITIES.iter().map(|name| (*name).to_owned()).collect(),
+            window: None,
         }
     }
 
@@ -220,6 +245,13 @@ impl Api {
     /// round.
     pub fn share_open_projects(&mut self, open: OpenProjects) {
         self.open = open;
+    }
+
+    /// Lets callers edit the project the window has on screen, through the
+    /// window, instead of being refused it.
+    pub fn share_window(&mut self, window: Arc<dyn Window>) {
+        self.add_capability("window");
+        self.window = Some(window);
     }
 
     /// Confines every write to `roots`: from here on a created project, an
@@ -295,9 +327,23 @@ impl Api {
     }
 
     fn run(&mut self, request: Request) -> Result<Reply, ApiError> {
+        if self.window.is_some()
+            && let Some(path) = request.project()
+            && self.open.holder(path) == Some(Holder::Window)
+        {
+            return self.run_on_window(request);
+        }
+        self.run_here(request)
+    }
+
+    /// A request on this API's own sessions.
+    fn run_here(&mut self, request: Request) -> Result<Reply, ApiError> {
         let view = |view: EditorView| Ok(Reply::View(Box::new(view)));
         match request {
             Request::Version => Ok(Reply::Version(self.version())),
+            Request::WindowGet => Ok(Reply::Window(
+                self.window.as_ref().and_then(|window| window.status()),
+            )),
             Request::ProjectCreate {
                 location,
                 name,
@@ -716,6 +762,108 @@ impl Api {
             .get_mut(&key_of(path))
             .ok_or_else(|| not_open(path))
     }
+
+    /// A request on the project the window has on screen, carried out on
+    /// the window's session: edits land in its history and on screen.
+    /// Renders, exports and templates work from a snapshot instead, so the
+    /// window goes on being edited while they run.
+    fn run_on_window(&mut self, request: Request) -> Result<Reply, ApiError> {
+        let view = |view: EditorView| Ok(Reply::View(Box::new(view)));
+        match request {
+            Request::ProjectOpen { path } | Request::ProjectGet { path } => {
+                view(self.on_window(&path, |session| (session.view(), false))?)
+            }
+            // The window keeps it open; nothing of the caller's to close.
+            Request::ProjectClose { .. } => Ok(Reply::Done(Done {})),
+            Request::ProjectDocument { path } => Ok(Reply::Document(
+                self.on_window(&path, |session| (session.document(), false))?,
+            )),
+            Request::ProjectSave { path, name } => {
+                if name.is_some() {
+                    return Err(refused(
+                        "The project on screen is renamed in the window".to_owned(),
+                    ));
+                }
+                self.on_window(&path, |session| (session.save(None), false))?
+                    .map_err(ApiError::failed)?;
+                Ok(Reply::Done(Done {}))
+            }
+            Request::ProjectSetVideo { path, video } => view(
+                self.on_window(&path, move |session| changed(session.set_video(video)))?
+                    .map_err(refused)?,
+            ),
+            Request::EditApply { path, command } => view(
+                self.on_window(&path, move |session| changed(session.apply(*command)))?
+                    .map_err(refused)?,
+            ),
+            Request::EditUndo { path } => view(self.on_window(&path, |session| {
+                let moved = session.can_undo();
+                (session.undo(), moved)
+            })?),
+            Request::EditRedo { path } => view(self.on_window(&path, |session| {
+                let moved = session.can_redo();
+                (session.redo(), moved)
+            })?),
+            Request::MediaImport { path, file } => {
+                let item = media::probe(&file)
+                    .map_err(ApiError::failed)?
+                    .to_new_media();
+                view(
+                    self.on_window(&path, move |session| {
+                        changed(session.apply(Command::AddMedia { item }))
+                    })?
+                    .map_err(refused)?,
+                )
+            }
+            request @ (Request::TemplateSave { .. }
+            | Request::ExportRun { .. }
+            | Request::PreviewFrame { .. }) => {
+                let path = request.project().unwrap_or_default().to_owned();
+                let snapshot = self
+                    .on_window(&path, |session| (session.snapshot(), false))?
+                    .ok_or_else(|| ApiError::failed("could not copy the project on screen"))?;
+                let key = key_of(&path);
+                self.sessions.insert(key.clone(), snapshot);
+                let reply = self.run_here(request);
+                self.sessions.remove(&key);
+                reply
+            }
+            _ => Err(ApiError::invalid("not a method on a project")),
+        }
+    }
+
+    /// Runs `work` on the window's session of `path` and hands back what it
+    /// made; `work` also says whether it changed the edit.
+    fn on_window<R: Send + 'static>(
+        &self,
+        path: &str,
+        work: impl FnOnce(&mut Session) -> (R, bool) + Send + 'static,
+    ) -> Result<R, ApiError> {
+        let window = self.window.as_ref().ok_or_else(|| not_open(path))?;
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let ran = window.edit(
+            path,
+            Box::new(move |session| {
+                let (made, changed) = work(session);
+                let _ = sender.send(made);
+                changed
+            }),
+        );
+        if !ran {
+            return Err(ApiError::failed(format!(
+                "the window did not take the edit on {path}: is it busy, or showing another project?"
+            )));
+        }
+        receiver
+            .try_recv()
+            .map_err(|_| ApiError::failed("the window did not answer"))
+    }
+}
+
+/// An edit's outcome, and whether it changed the edit: only a success did.
+fn changed<T, E>(outcome: Result<T, E>) -> (Result<T, E>, bool) {
+    let ok = outcome.is_ok();
+    (outcome, ok)
 }
 
 /// The jobs the API has begun, by name, with the thread each runs on.
@@ -872,8 +1020,12 @@ impl Drop for Api {
     /// The register is shared with an embedder that outlives this API:
     /// what it held open is given back.
     fn drop(&mut self) {
+        // Only what this API claimed: a snapshot of the window's project,
+        // left behind by a panic mid-render, is not this API's to give back.
         for key in self.sessions.keys() {
-            self.open.release(key);
+            if self.open.holder(key) == Some(Holder::Api) {
+                self.open.release(key);
+            }
         }
     }
 }

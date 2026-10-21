@@ -576,17 +576,30 @@ impl SettingsPane {
                     ..concat_server::Config::default()
                 };
                 // The window's export slot and its register of open
-                // projects, so one export at a time holds across the two
-                // and a caller never edits the project on screen.
+                // projects, so one export at a time holds across the two;
+                // the project on screen is edited through the window, live.
                 concat_server::Server::start(config, move |events| {
                     let mut api = concat_api::Api::new(events)?;
                     api.share_exporter(exporter);
                     api.share_open_projects(open_projects);
+                    api.share_window(std::sync::Arc::new(crate::remote::Remote));
                     Ok(api)
                 })
             });
         match started {
-            Ok(server) => studio.host.server = Some(server),
+            Ok(server) => {
+                // Where a tool run by the same person finds the door and
+                // its key, minted or set, without copying it off the page.
+                let door = serde_json::json!({
+                    "address": server.json_addr().map(|address| address.to_string()),
+                    "token": server.token(),
+                });
+                let _ = std::fs::write(
+                    studio.host.dirs.config.join("remote.json"),
+                    door.to_string(),
+                );
+                studio.host.server = Some(server);
+            }
             Err(error) => {
                 studio.prefs.server.enabled = false;
                 studio.prefs.save(&studio.host.dirs);

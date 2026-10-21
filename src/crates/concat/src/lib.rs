@@ -50,6 +50,7 @@ pub use platform::{ExportPublisher, FilePicker, install_export_publisher, instal
 mod panes;
 mod prefs;
 mod presets;
+mod remote;
 mod source;
 mod studio;
 mod sysinfo;

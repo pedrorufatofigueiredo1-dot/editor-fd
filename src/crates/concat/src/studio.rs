@@ -2399,6 +2399,42 @@ impl Studio {
         }
     }
 
+    /// An API caller's work on the project on screen, when it is `path`:
+    /// what [`Studio::apply`] does around an edit, with the caller's work
+    /// in the middle. False when another project, or none, is open.
+    pub(crate) fn remote_edit(&mut self, path: &str, work: concat_api::WindowWork) -> bool {
+        let on_screen = self
+            .session
+            .as_ref()
+            .is_some_and(|session| concat_api::same_project(session.path(), path));
+        if !on_screen {
+            return false;
+        }
+        self.end_burst();
+        self.flush_commit();
+        self.echo = None;
+        self.last_commit = None;
+        let Some(session) = self.session.as_mut() else {
+            return false;
+        };
+        if work(session) {
+            log::info!("edit: through the API");
+            self.after_change();
+        }
+        true
+    }
+
+    /// What the window has on screen, for an API caller.
+    pub(crate) fn remote_status(&self) -> Option<concat_api::WindowStatus> {
+        let session = self.session.as_ref()?;
+        Some(concat_api::WindowStatus {
+            path: session.path().to_owned(),
+            name: self.project_name.clone(),
+            playhead: f64::from(self.playhead),
+            selection: self.selection.clone(),
+        })
+    }
+
     /// [`Studio::apply`] as one move of an inspector gesture: the same
     /// bookkeeping, but the editor folds it into the gesture's undo step
     /// and the coalescing window stays open for the next move.
