@@ -75,12 +75,14 @@ fn main() {
         let icon = "../../../assets/icons/concat.ico";
         println!("cargo:rerun-if-changed={icon}");
         // The file's name and description as Windows shows them in its
-        // properties, and as code signing checks them: "Concat" in every
-        // build, where the default would be the crate's lower-case name.
+        // properties, and as code signing checks them. Editor FD is a
+        // modified Concat, and Concat's trademark policy asks a modified
+        // build to carry a name of its own; the copyright stays the
+        // project's, as the AGPL requires.
         winresource::WindowsResource::new()
             .set_icon(icon)
-            .set("ProductName", "Concat")
-            .set("FileDescription", "Concat")
+            .set("ProductName", "Editor FD")
+            .set("FileDescription", "Editor FD (based on Concat)")
             .set(
                 "LegalCopyright",
                 "Copyright 2026 Jareer and Concat contributors, AGPL-3.0-or-later",
