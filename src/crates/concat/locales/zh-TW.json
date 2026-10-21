@@ -2,6 +2,11 @@
   "_": {
     "name": "繁體中文"
   },
+  "aiMarks.clear": "清除 AI 標記",
+  "aiMarks.couldNotSave": "無法儲存 AI 標記：{0}",
+  "aiMarks.mark": "標記給 AI",
+  "aiMarks.range": "空白片段",
+  "aiMarks.unmark": "取消 AI 標記",
   "captions.addCaptions": "加入字幕",
   "captions.addedCaptions": "已加入 {0} 則字幕",
   "captions.captions": "字幕",

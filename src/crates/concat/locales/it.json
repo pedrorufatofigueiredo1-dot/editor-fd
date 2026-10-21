@@ -2,6 +2,11 @@
   "_": {
     "name": "Italiano"
   },
+  "aiMarks.clear": "Cancella i segni IA",
+  "aiMarks.couldNotSave": "Impossibile salvare i segni IA: {0}",
+  "aiMarks.mark": "Segna per l'IA",
+  "aiMarks.range": "Tratto vuoto",
+  "aiMarks.unmark": "Togli il segno IA",
   "captions.addCaptions": "Add captions",
   "captions.addedCaptions": "{0} sottotitoli aggiunti",
   "captions.captions": "Sottotitoli",

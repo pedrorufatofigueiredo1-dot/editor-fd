@@ -2,6 +2,11 @@
   "_": {
     "name": "ไทย"
   },
+  "aiMarks.clear": "ล้างเครื่องหมาย AI",
+  "aiMarks.couldNotSave": "บันทึกเครื่องหมาย AI ไม่ได้: {0}",
+  "aiMarks.mark": "ทำเครื่องหมายสำหรับ AI",
+  "aiMarks.range": "ช่วงว่าง",
+  "aiMarks.unmark": "เอาเครื่องหมาย AI ออก",
   "captions.addCaptions": "เพิ่มคำบรรยาย",
   "captions.addedCaptions": "เพิ่มคำบรรยาย {0} รายการแล้ว",
   "captions.captions": "คำบรรยาย",

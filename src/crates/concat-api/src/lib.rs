@@ -52,7 +52,7 @@ use concat_project::model::VideoSettings;
 
 pub use message::{
     API_VERSION, ApiError, Dirs, Done, ErrorCode, Event, ExportSpec, Fill, PackageInfo, ParamInfo,
-    Picture, Reply, Request, Response, Started, VersionInfo, WindowStatus, Written,
+    Picture, Reply, Request, Response, Started, VersionInfo, WindowMark, WindowStatus, Written,
 };
 
 /// Work for the window's thread on the session it has on screen. Returns
@@ -1629,5 +1629,51 @@ mod tests {
             save: false,
         }));
         assert_eq!(open.holder(&path), None, "closing gives it back");
+    }
+
+    /// The window's marks go out in the API's own casing, a range without
+    /// a clip id; a status from a window that does not mark still reads.
+    #[test]
+    fn the_windows_marks_read_and_write_in_camel_case() {
+        let status = WindowStatus {
+            path: "/p".to_owned(),
+            name: "P".to_owned(),
+            playhead: 1.0,
+            selection: Vec::new(),
+            marks: vec![
+                WindowMark {
+                    number: 1,
+                    kind: "clip".to_owned(),
+                    clip_id: Some("c2".to_owned()),
+                    track: 0,
+                    track_id: "t1".to_owned(),
+                    start: 0.0,
+                    end: 2.5,
+                    name: "beach.mp4".to_owned(),
+                },
+                WindowMark {
+                    number: 3,
+                    kind: "range".to_owned(),
+                    clip_id: None,
+                    track: 1,
+                    track_id: "t2".to_owned(),
+                    start: 2.5,
+                    end: 4.0,
+                    name: "Empty stretch".to_owned(),
+                },
+            ],
+        };
+        let written = serde_json::to_value(&status).expect("written");
+        assert_eq!(written["marks"][0]["clipId"], json!("c2"));
+        assert_eq!(written["marks"][0]["trackId"], json!("t1"));
+        assert!(written["marks"][1].get("clipId").is_none());
+        let back: WindowStatus = serde_json::from_value(written).expect("read back");
+        assert_eq!(back, status);
+
+        let older: WindowStatus = serde_json::from_value(json!({
+            "path": "/p", "name": "P", "playhead": 0.0, "selection": []
+        }))
+        .expect("read without marks");
+        assert!(older.marks.is_empty());
     }
 }

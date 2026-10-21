@@ -2,6 +2,11 @@
   "_": {
     "name": "Українська"
   },
+  "aiMarks.clear": "Очистити позначки ШІ",
+  "aiMarks.couldNotSave": "Не вдалося зберегти позначки ШІ: {0}",
+  "aiMarks.mark": "Позначити для ШІ",
+  "aiMarks.range": "Порожній відрізок",
+  "aiMarks.unmark": "Зняти позначку ШІ",
   "captions.addCaptions": "Додати субтитри",
   "captions.addedCaptions": "Додано субтитрів: {0}",
   "captions.captions": "Субтитри",

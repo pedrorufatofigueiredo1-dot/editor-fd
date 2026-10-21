@@ -13,9 +13,9 @@ import { DockDivider, DockSide, SeatBox } from "dock.slint";
 import { PaneKind } from "workspace/pane-switcher.slint";
 import { MenuItemData } from "primitives/context-menu.slint";
 import {
-    ClipData, ClipField, ClipTextField, DropData, GapData, MarkerData, SelectedClipData,
-    SelectedTransitionData,
-    StageGuideData, StageItemData, TimelineTabData, TimelineTool, TrackData,
+    AiRangeData, ClipData, ClipField, ClipTextField, DropData, GapData, MarkerData,
+    SelectedClipData, SelectedTransitionData, StageGuideData, StageItemData, TimelineTabData,
+    TimelineTool, TrackData,
     TrackSize,
 } from "timeline/model.slint";
 
@@ -417,6 +417,12 @@ export global Editor {
     /// A click on an empty lane, at this instant and this height down the
     /// stack: Rust picks the gap there, if there is one.
     callback gap-pressed(seconds: float, y: length);
+    /// A right-click on an empty lane, after the press under it picked
+    /// the gap there, if there is one: Rust fills `menu-items` with the
+    /// gap's rows and bumps `menu-token`, as for `clip-context`.
+    callback floor-context();
+    /// The stretches of lane marked for the AI; see AiRangeData.
+    in-out property <[AiRangeData]> ai-ranges;
     callback drag-hovered(payload: string, seconds: float, y: length);
     callback dropped(payload: string, seconds: float, y: length);
     callback track-flag-changed(index: int, visible: bool, muted: bool, locked: bool);

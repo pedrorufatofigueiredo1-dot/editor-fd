@@ -57,9 +57,10 @@ pub enum Request {
     Version,
 
     /// What the window this API is embedded in has on screen: its project,
-    /// the playhead and the selection, so a caller can edit "here" and
-    /// "this clip". `null` with no window, or no project open in it. Every
-    /// method on that project's folder then edits the one on screen, live.
+    /// the playhead, the selection and what was marked for the AI, so a
+    /// caller can edit "here", "this clip" and "the 2". `null` with no
+    /// window, or no project open in it. Every method on that project's
+    /// folder then edits the one on screen, live.
     #[serde(rename = "window.get")]
     WindowGet,
 
@@ -286,6 +287,36 @@ pub struct WindowStatus {
     pub playhead: f64,
     /// The ids of the clips selected on the timeline.
     pub selection: Vec<String>,
+    /// What the person marked for the AI on the timeline on screen, by
+    /// number, oldest first: "the 2" in what they say is the mark numbered
+    /// 2 here. Empty from a window that does not mark.
+    #[serde(default)]
+    pub marks: Vec<WindowMark>,
+}
+
+/// One thing marked for the AI; see [`WindowStatus::marks`].
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowMark {
+    /// The number on the mark. Numbers go up in the order marks were made
+    /// and are not reused or closed up when one is taken off.
+    pub number: u32,
+    /// `"clip"` for a clip, `"range"` for an empty stretch of one lane.
+    pub kind: String,
+    /// The clip, for a `"clip"` mark.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clip_id: Option<String>,
+    /// The lane: an index into the timeline's `tracks`, as the document
+    /// lists them.
+    pub track: usize,
+    /// The lane's id, for the commands that take one.
+    pub track_id: String,
+    /// Where it starts, in timeline seconds.
+    pub start: f64,
+    /// Where it ends, in timeline seconds.
+    pub end: f64,
+    /// Something to call it by: the media's name, a title's words.
+    pub name: String,
 }
 
 /// One template slot and the file that takes it.

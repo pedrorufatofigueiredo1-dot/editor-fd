@@ -59,6 +59,7 @@ use crate::host::{
     strip_window, window_art, window_span, window_start,
 };
 use crate::i18n::{self, t, tf};
+use crate::marks::{Marks, Target};
 use crate::panes::settings::installed;
 use crate::platform;
 use crate::prefs::Preferences;
@@ -560,6 +561,9 @@ pub struct Models {
     pub tabs: Rc<VecModel<TimelineTabData>>,
     pub tracks: Rc<VecModel<TrackData>>,
     pub clips: Rc<VecModel<ClipData>>,
+    /// The stretches of lane marked for the AI; a marked clip carries its
+    /// number on its own row.
+    pub ai_ranges: Rc<VecModel<AiRangeData>>,
     pub stage: Rc<VecModel<StageItemData>>,
     pub guides: Rc<VecModel<StageGuideData>>,
     pub media: Rc<VecModel<MediaItemData>>,
@@ -645,6 +649,7 @@ impl Models {
             tabs: Rc::new(VecModel::default()),
             tracks: Rc::new(VecModel::default()),
             clips: Rc::new(VecModel::default()),
+            ai_ranges: Rc::new(VecModel::default()),
             stage: Rc::new(VecModel::default()),
             guides: Rc::new(VecModel::default()),
             media: Rc::new(VecModel::default()),
@@ -809,6 +814,9 @@ pub struct Studio {
     pub menu_marker: Option<crate::marker::MarkerRef>,
     /// The marker the marker sheet is open on.
     pub marker_sheet: Option<crate::marker::MarkerRef>,
+    /// The menu was opened on an empty lane rather than on a clip or a
+    /// card: the picked gap's rows, and the marks'.
+    pub menu_floor: bool,
     pub menu_token: i32,
     /// The run of one kind of continuous message being folded into one
     /// line of the activity trail; see `note_activity`.
@@ -922,6 +930,9 @@ pub struct Studio {
     /// The gap a click on an empty lane picked, as it was picked; see
     /// `picked_gap` for whether it still stands.
     pub gap: Option<Gap>,
+    /// The clips and stretches of lane marked for the AI, kept beside the
+    /// project in `ai-marks.json`; see `crate::marks`.
+    pub ai_marks: Marks,
     pub project_sheet: crate::panes::project::ProjectPane,
     pub captions: crate::panes::captions::CaptionsPane,
     pub speech: crate::panes::speech::SpeechPane,
@@ -2043,6 +2054,7 @@ impl Studio {
             menu_media: None,
             menu_marker: None,
             marker_sheet: None,
+            menu_floor: false,
             menu_token: 0,
             activity_burst: None,
             toast: ToastState::default(),
@@ -2080,6 +2092,7 @@ impl Studio {
             title_blocks: HashMap::new(),
             drop: None,
             gap: None,
+            ai_marks: Marks::default(),
             project_sheet: crate::panes::project::ProjectPane::default(),
             captions: crate::panes::captions::CaptionsPane::default(),
             speech: crate::panes::speech::SpeechPane::default(),
@@ -2441,6 +2454,7 @@ impl Studio {
             name: self.project_name.clone(),
             playhead: f64::from(self.playhead),
             selection: self.selection.clone(),
+            marks: self.remote_marks(session.project()),
         })
     }
 
@@ -2501,6 +2515,7 @@ impl Studio {
             .map(|clip| clip.id.clone())
             .collect();
         self.selection.retain(|id| survivors.contains(id));
+        self.prune_ai_marks();
         self.schedule_autosave();
         self.sync_audio();
         self.request_media_art();
@@ -6797,6 +6812,231 @@ impl Studio {
         }
     }
 
+    // ── marks for the AI ──
+
+    /// Marks clip `id` for the AI, or takes its mark off. A clip that is
+    /// part of a larger selection takes the selection with it, as Delete
+    /// does; several marked at once are numbered along the timeline, top
+    /// lane first at a tie, the order they are read in.
+    fn mark_clips_for_ai(&mut self, id: &str, on: bool) {
+        let ids = if self.selection.len() > 1 && self.selection.iter().any(|held| held == id) {
+            self.selection.clone()
+        } else {
+            vec![id.to_owned()]
+        };
+        let mut placed: Vec<(f64, i32, String)> = ids
+            .into_iter()
+            .filter_map(|id| {
+                let clip = self.clip(&id)?;
+                Some((clip.start, self.row_of(&clip.track_id), id))
+            })
+            .collect();
+        placed.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        for (_, _, clip_id) in placed {
+            let target = Target::Clip { clip_id };
+            if on {
+                self.ai_marks.mark(target);
+            } else {
+                self.ai_marks.unmark(&target);
+            }
+        }
+        self.save_ai_marks();
+    }
+
+    /// Marks the picked gap for the AI, or takes its mark off.
+    fn mark_gap_for_ai(&mut self, on: bool) {
+        let Some(gap) = self.picked_gap() else {
+            return;
+        };
+        let target = Target::Range {
+            track_id: gap.track_id,
+            start: gap.start,
+            end: gap.end,
+        };
+        if on {
+            self.ai_marks.mark(target);
+        } else {
+            self.ai_marks.unmark(&target);
+        }
+        self.save_ai_marks();
+    }
+
+    fn clear_ai_marks(&mut self) {
+        self.ai_marks.clear();
+        self.save_ai_marks();
+    }
+
+    /// Drops the marks whose clip, or whose lane, is in no timeline any
+    /// more: a clip deleted takes its mark with it.
+    fn prune_ai_marks(&mut self) {
+        let Some(session) = self.session.as_ref() else {
+            return;
+        };
+        if self.ai_marks.is_empty() {
+            return;
+        }
+        let timelines = &session.project().timelines;
+        let clips: HashSet<&str> = timelines
+            .iter()
+            .flat_map(|timeline| timeline.clips.iter().map(|clip| clip.id.as_str()))
+            .collect();
+        let tracks: HashSet<&str> = timelines
+            .iter()
+            .flat_map(|timeline| timeline.tracks.iter().map(|track| track.id.as_str()))
+            .collect();
+        if self.ai_marks.prune(&clips, &tracks) {
+            self.save_ai_marks();
+        }
+    }
+
+    /// Keeps the marks beside the project. A failure is said rather than
+    /// fatal: the marks still stand on screen.
+    fn save_ai_marks(&mut self) {
+        let Some(session) = self.session.as_ref() else {
+            return;
+        };
+        log::info!("ai marks: {} kept", self.ai_marks.iter().count());
+        if let Err(error) = self.ai_marks.save(std::path::Path::new(session.path())) {
+            log::warn!("ai marks: {error}");
+            self.notify(&tf("aiMarks.couldNotSave", &[&error.to_string()]), true);
+        }
+    }
+
+    /// The menu rows every timeline menu shares: mark or unmark what it
+    /// was opened on, when it was opened on something (`marked` says
+    /// whether that is marked already), and clear them all, when any are.
+    /// Followed by a rule, when there are any.
+    fn ai_mark_rows(&self, marked: Option<bool>) -> Vec<MenuItemData> {
+        let action = |id: &str, label: String, glyph: Glyph| MenuItemData {
+            id: id.into(),
+            label: label.into(),
+            kind: MenuRow::Action,
+            glyph,
+            enabled: true,
+            ..Default::default()
+        };
+        let mut rows = Vec::new();
+        match marked {
+            Some(true) => rows.push(action("ai-unmark", t("aiMarks.unmark"), Glyph::Tag)),
+            Some(false) => rows.push(action("ai-mark", t("aiMarks.mark"), Glyph::Tag)),
+            None => {}
+        }
+        if !self.ai_marks.is_empty() {
+            rows.push(action("ai-clear", t("aiMarks.clear"), Glyph::Eraser));
+        }
+        if !rows.is_empty() {
+            rows.push(MenuItemData {
+                kind: MenuRow::Separator,
+                ..Default::default()
+            });
+        }
+        rows
+    }
+
+    /// The right-click menu on an empty lane: the picked gap's mark, and
+    /// clearing the marks. Nothing, so no menu, when there is neither.
+    fn floor_menu(&self) -> Vec<MenuItemData> {
+        let marked = self.picked_gap().map(|gap| {
+            self.ai_marks
+                .number_of(&Target::Range {
+                    track_id: gap.track_id,
+                    start: gap.start,
+                    end: gap.end,
+                })
+                .is_some()
+        });
+        let mut rows = self.ai_mark_rows(marked);
+        // No rule under the last row.
+        rows.pop();
+        rows
+    }
+
+    /// A row of the empty lane's menu.
+    pub fn floor_action(&mut self, action: &str) {
+        log::info!("floor menu: {action}");
+        match action {
+            "ai-mark" => self.mark_gap_for_ai(true),
+            "ai-unmark" => self.mark_gap_for_ai(false),
+            "ai-clear" => self.clear_ai_marks(),
+            _ => {}
+        }
+    }
+
+    /// The stretches of lane marked on the timeline on screen, for the
+    /// lanes to draw.
+    fn ai_ranges(&self) -> Vec<AiRangeData> {
+        let timeline = self.timeline();
+        self.ai_marks
+            .iter()
+            .filter_map(|mark| match &mark.target {
+                Target::Range {
+                    track_id,
+                    start,
+                    end,
+                } if timeline.tracks.iter().any(|track| &track.id == track_id) => {
+                    Some(AiRangeData {
+                        number: mark.number as i32,
+                        start: *start as f32,
+                        duration: (end - start) as f32,
+                        row: self.row_of(track_id),
+                    })
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The marks on the timeline on screen, for an API caller: each with
+    /// where it is and something to call it by.
+    fn remote_marks(&self, project: &Project) -> Vec<concat_api::WindowMark> {
+        let timeline = project.active();
+        let lane = |track_id: &str| {
+            timeline
+                .tracks
+                .iter()
+                .position(|track| track.id == track_id)
+        };
+        self.ai_marks
+            .iter()
+            .filter_map(|mark| match &mark.target {
+                Target::Clip { clip_id } => {
+                    let clip = timeline.clip(clip_id)?;
+                    let name = match (project.media_by_id(&clip.media_id), &clip.text) {
+                        (Some(media), _) => media.name.clone(),
+                        (None, Some(text)) if !text.content.trim().is_empty() => {
+                            text.content.trim().to_owned()
+                        }
+                        _ => clip.name.clone(),
+                    };
+                    Some(concat_api::WindowMark {
+                        number: mark.number,
+                        kind: "clip".to_owned(),
+                        clip_id: Some(clip.id.clone()),
+                        track: lane(&clip.track_id)?,
+                        track_id: clip.track_id.clone(),
+                        start: clip.start,
+                        end: clip.start + clip.duration,
+                        name,
+                    })
+                }
+                Target::Range {
+                    track_id,
+                    start,
+                    end,
+                } => Some(concat_api::WindowMark {
+                    number: mark.number,
+                    kind: "range".to_owned(),
+                    clip_id: None,
+                    track: lane(track_id)?,
+                    track_id: track_id.clone(),
+                    start: *start,
+                    end: *end,
+                    name: t("aiMarks.range"),
+                }),
+            })
+            .collect()
+    }
+
     fn remove_selected(&mut self, ripple: bool) {
         let doomed: Vec<String> = self
             .selection
@@ -7302,7 +7542,12 @@ impl Studio {
                 if swept > 0 {
                     log::info!("{swept} stale proxies swept from {}", project_dir.display());
                 }
+                let ai_marks = Marks::load(project_dir);
                 self.session = Some(session);
+                // Marks on clips deleted while the file was not looked at
+                // - by another build, or by hand - go now.
+                self.ai_marks = ai_marks;
+                self.prune_ai_marks();
                 crate::host::next_project_epoch();
                 self.forget_art();
                 self.art_failed.clear();
@@ -7449,6 +7694,7 @@ impl Studio {
             self.host.open_projects.release(session.path());
         }
         self.session = None;
+        self.ai_marks = Marks::default();
         // Whatever a worker still brings back for this project is dropped
         // at delivery; the sheets that were waiting on one stop waiting.
         crate::host::next_project_epoch();
@@ -7982,6 +8228,10 @@ impl Studio {
                         start: clip.start as f32,
                         duration: clip.duration as f32,
                         selected: self.selection.iter().any(|id| id == &clip.id),
+                        ai_mark: self
+                            .ai_marks
+                            .number_of_clip(&clip.id)
+                            .map_or(0, |number| number as i32),
                         transition_selected: self
                             .selected_transition()
                             .is_some_and(|picked| picked.id == clip.id),
@@ -8064,6 +8314,7 @@ impl Studio {
             },
             None => GapData::default(),
         });
+        sync(&models.ai_ranges, self.ai_ranges());
 
         editor.set_selected_clip(self.selected());
         editor.set_selected_transition(self.selected_transition_data());
@@ -9759,6 +10010,9 @@ impl Studio {
         if let Some(marker) = self.menu_marker.as_ref() {
             return self.marker_menu_rows(marker);
         }
+        if self.menu_floor {
+            return self.floor_menu();
+        }
         let Some(clip) = self.menu_target.as_ref().and_then(|id| self.clip(id)) else {
             return Vec::new();
         };
@@ -9794,7 +10048,10 @@ impl Studio {
             ..Default::default()
         };
 
-        let mut rows = vec![
+        // First, where it is found without reading the menu: it is what
+        // the menu is opened for, over and over, while talking to the AI.
+        let mut rows = self.ai_mark_rows(Some(self.ai_marks.number_of_clip(&clip.id).is_some()));
+        rows.extend([
             action(
                 "copy",
                 t("common.copy"),
@@ -9844,7 +10101,7 @@ impl Studio {
                     && (clip.kind == model::ClipKind::Video || clip.kind == model::ClipKind::Image),
             ),
             rule(),
-        ];
+        ]);
         // One slot, two verbs: the sound is either on its picture or off it.
         // Shown on every video clip, so the verb is where a person looks for
         // it, and greyed rather than gone when the file has no sound.
@@ -10604,6 +10861,9 @@ impl Studio {
                 });
             }
             "lock" => self.toggle_lock(&clip.track_id),
+            "ai-mark" => self.mark_clips_for_ai(id, true),
+            "ai-unmark" => self.mark_clips_for_ai(id, false),
+            "ai-clear" => self.clear_ai_marks(),
             // A clip that is part of the selection takes the selection with
             // it: Delete on one of five selected clips means the five.
             "delete" | "ripple-delete" => {

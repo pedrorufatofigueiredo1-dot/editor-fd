@@ -2,6 +2,11 @@
   "_": {
     "name": "Türkçe"
   },
+  "aiMarks.clear": "Yapay zekâ işaretlerini temizle",
+  "aiMarks.couldNotSave": "Yapay zekâ işaretleri kaydedilemedi: {0}",
+  "aiMarks.mark": "Yapay zekâ için işaretle",
+  "aiMarks.range": "Boş aralık",
+  "aiMarks.unmark": "Yapay zekâ işaretini kaldır",
   "captions.addCaptions": "Add captions",
   "captions.addedCaptions": "{0} altyazı eklendi",
   "captions.captions": "Altyazılar",

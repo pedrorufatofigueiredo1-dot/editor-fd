@@ -40,6 +40,7 @@ mod grading;
 mod host;
 mod marker;
 mod i18n;
+mod marks;
 mod meters;
 mod platform;
 /// What a phone's own crate installs before the window runs: the way to
@@ -270,6 +271,7 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
         editor.set_timeline_tabs(ModelRc::from(models.tabs.clone()));
         editor.set_tracks(ModelRc::from(models.tracks.clone()));
         editor.set_clips(ModelRc::from(models.clips.clone()));
+        editor.set_ai_ranges(ModelRc::from(models.ai_ranges.clone()));
         editor.set_stage_items(ModelRc::from(models.stage.clone()));
         editor.set_stage_guides(ModelRc::from(models.guides.clone()));
         editor.set_media(ModelRc::from(models.media.clone()));
@@ -1255,6 +1257,7 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
         state.menu_token += 1;
         state.menu_media = None;
         state.menu_marker = None;
+        state.menu_floor = false;
         if state.clip(id.as_str()).is_none() {
             state.menu_target = None;
             return;
@@ -1270,6 +1273,7 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
         state.menu_token += 1;
         state.menu_target = None;
         state.menu_marker = None;
+        state.menu_floor = false;
         state.menu_media = state
             .media
             .by_row(state.project(), row)
@@ -1280,6 +1284,7 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
         state.menu_token += 1;
         state.menu_target = None;
         state.menu_media = None;
+        state.menu_floor = false;
         state.menu_marker = Some(marker::MarkerRef::new(&id, &clip));
     }));
     editor.on_marker_add(on_window!(|state, target: SharedString| {
@@ -1302,6 +1307,15 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
     app.on_marker_dismissed(on_window!(|state| {
         state.marker_sheet = None;
     }));
+    // A right-click on an empty lane, just after the press has picked the
+    // gap under it, if there is one: the gap's rows and the marks'.
+    editor.on_floor_context(on_window!(|state| {
+        state.menu_token += 1;
+        state.menu_target = None;
+        state.menu_media = None;
+        state.menu_marker = None;
+        state.menu_floor = true;
+    }));
     editor.on_menu_selected(on_window!(|state, action: SharedString| {
         if state.menu_marker.is_some() {
             state.marker_action(action.as_str());
@@ -1309,6 +1323,10 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
         }
         if let Some(id) = state.menu_media.clone() {
             state.media_action(&id, action.as_str());
+            return;
+        }
+        if state.menu_floor {
+            state.floor_action(action.as_str());
             return;
         }
         // The clip the menu was opened on; failing that, the one clip that

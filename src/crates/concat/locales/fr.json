@@ -2,6 +2,11 @@
   "_": {
     "name": "Français"
   },
+  "aiMarks.clear": "Effacer les marques IA",
+  "aiMarks.couldNotSave": "Impossible d'enregistrer les marques IA : {0}",
+  "aiMarks.mark": "Marquer pour l'IA",
+  "aiMarks.range": "Espace vide",
+  "aiMarks.unmark": "Retirer la marque IA",
   "captions.addCaptions": "Add captions",
   "captions.addedCaptions": "{0} sous-titres ajoutés",
   "captions.captions": "Sous-titres",

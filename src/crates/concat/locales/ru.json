@@ -2,6 +2,11 @@
   "_": {
     "name": "Русский"
   },
+  "aiMarks.clear": "Очистить отметки ИИ",
+  "aiMarks.couldNotSave": "Не удалось сохранить отметки ИИ: {0}",
+  "aiMarks.mark": "Отметить для ИИ",
+  "aiMarks.range": "Пустой участок",
+  "aiMarks.unmark": "Снять отметку ИИ",
   "captions.addCaptions": "Добавить субтитры",
   "captions.addedCaptions": "Добавлено субтитров: {0}",
   "captions.captions": "Субтитры",

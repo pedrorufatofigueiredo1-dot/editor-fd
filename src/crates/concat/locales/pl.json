@@ -2,6 +2,11 @@
   "_": {
     "name": "Polski"
   },
+  "aiMarks.clear": "Wyczyść oznaczenia AI",
+  "aiMarks.couldNotSave": "Nie udało się zapisać oznaczeń AI: {0}",
+  "aiMarks.mark": "Oznacz dla AI",
+  "aiMarks.range": "Pusty odcinek",
+  "aiMarks.unmark": "Usuń oznaczenie AI",
   "captions.addCaptions": "Dodaj napisy",
   "captions.addedCaptions": "Dodane napisy: {0}",
   "captions.captions": "Napisy",

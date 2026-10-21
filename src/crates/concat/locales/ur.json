@@ -2,6 +2,11 @@
   "_": {
     "name": "اردو"
   },
+  "aiMarks.clear": "اے آئی کے نشانات صاف کریں",
+  "aiMarks.couldNotSave": "اے آئی کے نشانات محفوظ نہیں ہو سکے: {0}",
+  "aiMarks.mark": "اے آئی کے لیے نشان لگائیں",
+  "aiMarks.range": "خالی حصہ",
+  "aiMarks.unmark": "اے آئی کا نشان ہٹائیں",
   "captions.addCaptions": "کیپشن شامل کریں",
   "captions.addedCaptions": "{0} کیپشن شامل کیے گئے",
   "captions.captions": "کیپشنز",

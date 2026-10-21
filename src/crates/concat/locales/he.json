@@ -2,6 +2,11 @@
   "_": {
     "name": "עברית"
   },
+  "aiMarks.clear": "ניקוי הסימונים לבינה המלאכותית",
+  "aiMarks.couldNotSave": "לא ניתן לשמור את הסימונים לבינה המלאכותית: {0}",
+  "aiMarks.mark": "סימון עבור הבינה המלאכותית",
+  "aiMarks.range": "קטע ריק",
+  "aiMarks.unmark": "הסרת הסימון לבינה המלאכותית",
   "captions.addCaptions": "הוספת כתוביות",
   "captions.addedCaptions": "נוספו {0} כתוביות",
   "captions.captions": "כתוביות",

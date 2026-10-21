@@ -2,6 +2,11 @@
   "_": {
     "name": "Español"
   },
+  "aiMarks.clear": "Borrar marcas de la IA",
+  "aiMarks.couldNotSave": "No se pudieron guardar las marcas de la IA: {0}",
+  "aiMarks.mark": "Marcar para la IA",
+  "aiMarks.range": "Tramo vacío",
+  "aiMarks.unmark": "Desmarcar para la IA",
   "captions.addCaptions": "Add captions",
   "captions.addedCaptions": "{0} subtítulos añadidos",
   "captions.captions": "Subtítulos",

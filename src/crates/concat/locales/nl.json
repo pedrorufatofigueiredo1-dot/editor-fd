@@ -2,6 +2,11 @@
   "_": {
     "name": "Nederlands"
   },
+  "aiMarks.clear": "AI-markeringen wissen",
+  "aiMarks.couldNotSave": "Kon de AI-markeringen niet opslaan: {0}",
+  "aiMarks.mark": "Markeren voor de AI",
+  "aiMarks.range": "Leeg stuk",
+  "aiMarks.unmark": "AI-markering verwijderen",
   "captions.addCaptions": "Ondertitels toevoegen",
   "captions.addedCaptions": "Ondertitels toegevoegd: {0}",
   "captions.captions": "Ondertitels",
