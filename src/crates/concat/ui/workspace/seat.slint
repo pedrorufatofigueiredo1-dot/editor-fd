@@ -430,6 +430,12 @@ export component Seat inherits Rectangle {
             lanes-resized(width) => { Editor.lanes-resized(width); }
             floor-pressed => { Editor.blur(); }
             key-mark-moved(from, to) => { Editor.key-mark-moved(from, to); }
+            markers: Editor.markers;
+            marker-on-clip: Editor.marker-on-clip;
+            marker-add(target) => { Editor.marker-add(target); }
+            marker-moved(id, clip, seconds) => { Editor.marker-moved(id, clip, seconds); }
+            marker-edit(id, clip) => { Editor.marker-edit(id, clip); }
+            marker-context(id, clip) => { Editor.marker-context(id, clip); }
             scrubbed(seconds) => {
                 Editor.blur();
                 Editor.scrubbed(seconds);

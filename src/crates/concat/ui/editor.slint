@@ -13,7 +13,8 @@ import { DockDivider, DockSide, SeatBox } from "dock.slint";
 import { PaneKind } from "workspace/pane-switcher.slint";
 import { MenuItemData } from "primitives/context-menu.slint";
 import {
-    ClipData, ClipField, ClipTextField, DropData, GapData, SelectedClipData, SelectedTransitionData,
+    ClipData, ClipField, ClipTextField, DropData, GapData, MarkerData, SelectedClipData,
+    SelectedTransitionData,
     StageGuideData, StageItemData, TimelineTabData, TimelineTool, TrackData,
     TrackSize,
 } from "timeline/model.slint";
@@ -375,6 +376,17 @@ export global Editor {
     callback scrubbed(seconds: float);
     /// A ruler diamond was dragged: every key at `from` moves to `to`.
     callback key-mark-moved(from: float, to: float);
+    /// The active timeline's markers, on its ruler and on its clips.
+    in-out property <[MarkerData]> markers;
+    /// A selected clip is under the playhead: the tray's "on the clip" row
+    /// has one to mark.
+    in-out property <bool> marker-on-clip;
+    /// A marker at the playhead: "auto" (the selected clip under it, else
+    /// the ruler), "timeline" or "clip".
+    callback marker-add(target: string);
+    callback marker-moved(id: string, clip-id: string, seconds: float);
+    callback marker-edit(id: string, clip-id: string);
+    callback marker-context(id: string, clip-id: string);
     callback clip-pressed(id: string, additive: bool, edge: int);
     /// Save Video Frame As, from the picture's right-click menu: the
     /// frame at the playhead, at the output's size, as a PNG.

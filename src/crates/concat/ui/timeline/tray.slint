@@ -198,6 +198,10 @@ export component TimelineTray inherits Rectangle {
     /// The mark over freeze, mirror and rotate: open its menu under the
     /// button at this x, hosted by the pane like the axis menu.
     callback transform-menu-requested(x: length);
+    /// A marker at the playhead, wherever it fits; and the chevron beside
+    /// it, which opens the menu that says where, hosted like the others.
+    callback add-marker();
+    callback marker-menu-requested(x: length);
     callback undo();
     callback redo();
     callback split();
@@ -328,6 +332,27 @@ export component TimelineTray inherits Rectangle {
                 icon-size: 11px;
                 enabled: root.selected-count > 0;
                 clicked => { root.transform-menu-requested(verbs.x); }
+            }
+        }
+
+        // A marker at the playhead, as Filmora has it: the mark drops one
+        // on the selected clip when the playhead is over it, else on the
+        // ruler; the chevron says which outright.
+        markers := HorizontalLayout {
+            spacing: 0;
+
+            TrayButton {
+                glyph: Glyph.marker;
+                label: I18n.t1("tray.addMarker", "M");
+                icon-size: 16px;
+                clicked => { root.add-marker(); }
+            }
+            TrayButton {
+                width: 16px;
+                glyph: Glyph.chevron-down;
+                label: I18n.t("tray.markerOptions");
+                icon-size: 11px;
+                clicked => { root.marker-menu-requested(markers.x); }
             }
         }
 

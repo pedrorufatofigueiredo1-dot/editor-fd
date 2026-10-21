@@ -10,7 +10,7 @@ import { ContextMenu, MenuItemData, MenuMetrics, MenuRow } from "../primitives/c
 import { HairlineSplitter } from "splitter.slint";
 import { ThinHScrollbar, ThinScrollbar } from "../primitives/scrollbar.slint";
 import {
-    ClipData, DropData, GapData, TimelineTabData, TimelineTool, TrackData, TrackSize,
+    ClipData, DropData, GapData, MarkerData, TimelineTabData, TimelineTool, TrackData, TrackSize,
 } from "../timeline/model.slint";
 import { TimelineTabs } from "../timeline/tabs.slint";
 import { TimelineTray } from "../timeline/tray.slint";
@@ -71,6 +71,12 @@ export component TimelinePane inherits Rectangle {
     property <int> transform-token;
     /// One of that menu's verbs, by name: freeze, mirror, rotate.
     callback clip-verb(action: string);
+    /// Bumped to open the marker button's menu.
+    property <int> marker-token;
+    /// A selected clip is under the playhead, so there is one to mark.
+    in property <bool> marker-on-clip;
+    /// Drop a marker at the playhead: "auto", "timeline" or "clip".
+    callback marker-add(target: string);
     callback undo();
     callback redo();
     callback split();
@@ -98,6 +104,11 @@ export component TimelinePane inherits Rectangle {
 
     callback scrubbed(seconds: float);
     callback key-mark-moved(from: float, to: float);
+    /// The markers, and what is done to one on the lanes; see Lanes.
+    in property <[MarkerData]> markers;
+    callback marker-moved(id: string, clip-id: string, seconds: float);
+    callback marker-edit(id: string, clip-id: string);
+    callback marker-context(id: string, clip-id: string);
     /// A press on an empty stretch of lane; see Editor.blur.
     callback floor-pressed();
     callback clip-pressed(id: string, additive: bool, edge: int);
@@ -277,6 +288,41 @@ export component TimelinePane inherits Rectangle {
         selected(id) => { root.clip-verb(id); }
     }
 
+    // The marker button's menu: where the marker goes, said outright.
+    marker-menu := ContextMenu {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+        items: [
+            {
+                id: "timeline",
+                label: I18n.t("timelinePane.markerOnTimeline"),
+                kind: MenuRow.action,
+                glyph: Glyph.marker,
+                shortcut: "",
+                enabled: true,
+                danger: false,
+                checkable: false,
+                checked: false,
+            },
+            {
+                id: "clip",
+                label: I18n.t("timelinePane.markerOnClip"),
+                kind: MenuRow.action,
+                glyph: Glyph.frame,
+                shortcut: "",
+                enabled: root.marker-on-clip,
+                danger: false,
+                checkable: false,
+                checked: false,
+            },
+        ];
+        menu-height: 2 * MenuMetrics.action + MenuMetrics.padding;
+        token: root.marker-token;
+        selected(id) => { root.marker-add(id); }
+    }
+
     Pane {
         // The one edge kept when the outlines came off. The timeline sits
         // under the three panes above it rather than beside anything, so its
@@ -350,6 +396,13 @@ export component TimelinePane inherits Rectangle {
                 transform-menu.request-y = tray.absolute-position.y - root.absolute-position.y
                     + tray.height;
                 root.transform-token += 1;
+            }
+            add-marker => { root.marker-add("auto"); }
+            marker-menu-requested(x) => {
+                marker-menu.request-x = tray.absolute-position.x - root.absolute-position.x + x;
+                marker-menu.request-y = tray.absolute-position.y - root.absolute-position.y
+                    + tray.height;
+                root.marker-token += 1;
             }
             undo => { root.undo(); }
             redo => { root.redo(); }
@@ -430,6 +483,10 @@ export component TimelinePane inherits Rectangle {
                 scrubbed(seconds) => { root.scrubbed(seconds); }
                 playhead-split => { root.split(); }
                 key-mark-moved(from, to) => { root.key-mark-moved(from, to); }
+                markers: root.markers;
+                marker-moved(id, clip, seconds) => { root.marker-moved(id, clip, seconds); }
+                marker-edit(id, clip) => { root.marker-edit(id, clip); }
+                marker-context(id, clip) => { root.marker-context(id, clip); }
                 hovered(seconds) => { root.hovered(seconds); }
                 hover-ended => { root.hover-ended(); }
                 floor-pressed => { root.floor-pressed(); }

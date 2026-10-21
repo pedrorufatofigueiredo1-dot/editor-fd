@@ -1,0 +1,164 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Jareer and Concat contributors
+
+import { I18n } from "../i18n.slint";
+import { Theme } from "../theme/theme.slint";
+import { Glyph } from "../icons.slint";
+import { Button, DialogSection, Field, Modal } from "../primitives/modal.slint";
+
+// The marker sheet: what a double click on a marker opens, as Filmora's
+// does. A name, a colour and a note, kept here while they are typed and
+// handed to Rust together on Save, which makes them one undo step.
+
+export struct MarkerSheetData {
+    open: bool,
+    /// Where the marker is, as a sentence: "On the timeline at 00:00:08:01".
+    place: string,
+    name: string,
+    note: string,
+    /// Index into the swatches below: `MARKER_COLORS` in the model.
+    color: int,
+}
+
+export component MarkerDialog inherits Modal {
+    in property <MarkerSheetData> data;
+
+    callback saved(name: string, note: string, color: int);
+    callback deleted();
+    callback dismissed();
+
+    /// The same eight, in the same order, as `MARKER_COLORS`.
+    property <[color]> swatches: [
+        #3d8bff, #34c759, #ffcc00, #ff9500, #ff3b30, #ff2d92, #af52de, #32d2f5,
+    ];
+    property <string> name-draft;
+    property <string> note-draft;
+    property <int> color-draft;
+
+    open: root.data.open;
+    title: I18n.t("marker.marker");
+    glyph: Glyph.marker;
+    surface-width: 400px;
+
+    closed => { root.dismissed(); }
+
+    changed open => {
+        if (root.open) {
+            root.name-draft = root.data.name;
+            root.note-draft = root.data.note;
+            root.color-draft = root.data.color;
+        }
+    }
+
+    // Made afresh each time the sheet opens, so a field typed into and
+    // cancelled on one marker does not show its words on the next.
+    if root.data.open: VerticalLayout {
+        DialogSection {
+            first: true;
+            title: I18n.t("common.name");
+
+            Field {
+                value: root.data.name;
+                placeholder: I18n.t("marker.untitled");
+                edited(text) => { root.name-draft = text; }
+            }
+
+            Text {
+                text: root.data.place;
+                color: Theme.fg-dim;
+                font-size: Theme.fs-sm;
+                overflow: elide;
+            }
+        }
+
+        DialogSection {
+            title: I18n.t("common.color");
+
+            HorizontalLayout {
+                alignment: start;
+                spacing: 8px;
+
+                for swatch[index] in root.swatches: Rectangle {
+                    width: 24px;
+                    height: 24px;
+                    border-radius: 12px;
+                    background: swatch;
+                    border-width: index == root.color-draft ? 2px : 0px;
+                    border-color: Theme.fg;
+
+                    TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.color-draft = index; }
+                    }
+                }
+            }
+        }
+
+        DialogSection {
+            title: I18n.t("marker.note");
+
+            Rectangle {
+                height: 96px;
+                border-radius: Theme.r;
+                background: Theme.well;
+                border-width: 1px;
+                border-color: note.has-focus ? Theme.accent : Theme.line;
+                clip: true;
+
+                note := TextInput {
+                    x: 10px;
+                    y: 8px;
+                    width: parent.width - 20px;
+                    height: parent.height - 16px;
+                    text: root.data.note;
+                    color: Theme.fg;
+                    font-size: Theme.fs;
+                    single-line: false;
+                    wrap: word-wrap;
+                    selection-background-color: Theme.accent;
+                    selection-foreground-color: Theme.on-accent;
+                    edited => { root.note-draft = self.text; }
+                }
+
+                if root.note-draft == "" && !note.has-focus: Text {
+                    x: 10px;
+                    y: 8px;
+                    text: I18n.t("marker.notePlaceholder");
+                    color: Theme.fg-dim;
+                    font-size: Theme.fs;
+                }
+            }
+        }
+
+        Rectangle {
+            height: 1px;
+            background: Theme.line;
+        }
+
+        HorizontalLayout {
+            padding: 14px;
+            spacing: 8px;
+
+            Button {
+                danger: true;
+                glyph: Glyph.trash;
+                label: I18n.t("common.delete");
+                clicked => { root.deleted(); }
+            }
+
+            Rectangle { horizontal-stretch: 1; }
+
+            Button {
+                label: I18n.t("common.cancel");
+                clicked => { root.dismissed(); }
+            }
+
+            Button {
+                primary: true;
+                glyph: Glyph.check;
+                label: I18n.t("marker.save");
+                clicked => { root.saved(root.name-draft, root.note-draft, root.color-draft); }
+            }
+        }
+    }
+}

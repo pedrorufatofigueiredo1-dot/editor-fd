@@ -38,6 +38,7 @@ mod format;
 mod gpu;
 mod grading;
 mod host;
+mod marker;
 mod i18n;
 mod meters;
 mod platform;
@@ -297,6 +298,7 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
         app.global::<KeyEditor>()
             .set_rows(ModelRc::from(models.key_editor_rows.clone()));
         editor.set_key_marks(ModelRc::from(models.key_marks.clone()));
+        editor.set_markers(ModelRc::from(models.markers.clone()));
         app.global::<Library>()
             .set_views(ModelRc::from(models.library_views.clone()));
         editor.set_menu_items(ModelRc::from(models.menu.clone()));
@@ -1252,6 +1254,7 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
     editor.on_clip_context(on_window!(|state, id: SharedString| {
         state.menu_token += 1;
         state.menu_media = None;
+        state.menu_marker = None;
         if state.clip(id.as_str()).is_none() {
             state.menu_target = None;
             return;
@@ -1266,12 +1269,44 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
     editor.on_media_context(on_window!(|state, row: i32| {
         state.menu_token += 1;
         state.menu_target = None;
+        state.menu_marker = None;
         state.menu_media = state
             .media
             .by_row(state.project(), row)
             .map(|item| item.id.clone());
     }));
+    // A marker's flag: the same menu rows and token, its own target.
+    editor.on_marker_context(on_window!(|state, id: SharedString, clip: SharedString| {
+        state.menu_token += 1;
+        state.menu_target = None;
+        state.menu_media = None;
+        state.menu_marker = Some(marker::MarkerRef::new(&id, &clip));
+    }));
+    editor.on_marker_add(on_window!(|state, target: SharedString| {
+        state.add_marker(target.as_str());
+    }));
+    editor.on_marker_moved(on_window!(
+        |state, id: SharedString, clip: SharedString, seconds: f32| {
+            state.move_marker(marker::MarkerRef::new(&id, &clip), seconds);
+        }
+    ));
+    editor.on_marker_edit(on_window!(|state, id: SharedString, clip: SharedString| {
+        state.edit_marker(marker::MarkerRef::new(&id, &clip));
+    }));
+    app.on_marker_saved(on_window!(|state, name: SharedString, note: SharedString, color: i32| {
+        state.save_marker(&name, &note, color);
+    }));
+    app.on_marker_deleted(on_window!(|state| {
+        state.delete_open_marker();
+    }));
+    app.on_marker_dismissed(on_window!(|state| {
+        state.marker_sheet = None;
+    }));
     editor.on_menu_selected(on_window!(|state, action: SharedString| {
+        if state.menu_marker.is_some() {
+            state.marker_action(action.as_str());
+            return;
+        }
         if let Some(id) = state.menu_media.clone() {
             state.media_action(&id, action.as_str());
             return;

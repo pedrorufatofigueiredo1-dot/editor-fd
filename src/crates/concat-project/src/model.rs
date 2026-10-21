@@ -1365,10 +1365,57 @@ pub struct Clip {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(deserialize_with = "wire::maybe")]
     pub shape: Option<ShapeStyle>,
+    /// Markers on the clip itself, which travel with it; see
+    /// [`Clip::marker_time`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(deserialize_with = "wire::list")]
+    pub markers: Vec<Marker>,
     /// Fields this build does not know, kept so a document written by a
     /// newer or a different build round-trips through this one intact.
     #[serde(flatten, default, skip_serializing_if = "Map::is_empty")]
     pub extra: Map<String, Value>,
+}
+
+/// How far past a clip's edge a marker still counts as on it, in seconds.
+const MARKER_EPSILON: f64 = 1e-6;
+
+/// The colours a marker can take, in the order the edit sheet offers them.
+/// The first is what a new marker gets.
+pub const MARKER_COLORS: [&str; 8] = [
+    "#3d8bff", "#34c759", "#ffcc00", "#ff9500", "#ff3b30", "#ff2d92", "#af52de", "#32d2f5",
+];
+
+/// A pin on the timeline's ruler or on a clip: a moment to come back to,
+/// with a name, a colour and a note, as Filmora has them.
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Marker {
+    /// Minted by the editor ("k1", ...). Unique on its timeline or clip; a
+    /// split clip's pieces share their markers' ids.
+    pub id: String,
+    /// On a timeline, seconds from its start. On a clip, seconds into its
+    /// source, so it stays on the moment it marks.
+    pub at: f64,
+    /// What it is called; empty for none.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub name: String,
+    /// A CSS hex colour, one of [`MARKER_COLORS`] as the window sets it.
+    pub color: String,
+    /// A longer note; empty for none.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub note: String,
+}
+
+impl Default for Marker {
+    fn default() -> Self {
+        Marker {
+            id: String::new(),
+            at: 0.0,
+            name: String::new(),
+            color: MARKER_COLORS[0].to_owned(),
+            note: String::new(),
+        }
+    }
 }
 
 /// One property's keys, as `(at, value, ease)` over `0..=1` of an old
@@ -1461,8 +1508,29 @@ impl Clip {
             enhanced: None,
             text: None,
             shape: None,
+            markers: Vec::new(),
             extra: Map::new(),
         }
+    }
+
+    /// Where `marker` sits on the timeline, when it falls inside what the
+    /// clip shows. A clip's marker is held in source seconds, so a trim or
+    /// a move carries it with the moment it marks; a piece of a split clip
+    /// shows the markers of its own stretch of the source.
+    pub fn marker_time(&self, marker: &Marker) -> Option<f64> {
+        let speed = if self.speed > 0.0 { self.speed } else { 1.0 };
+        let time = self.start + (marker.at - self.source_start) / speed;
+        let inside = time >= self.start - MARKER_EPSILON
+            && time <= self.start + self.duration + MARKER_EPSILON;
+        inside.then_some(time)
+    }
+
+    /// The source second a timeline instant over this clip shows: what a
+    /// marker dropped on the clip at `time` is held as.
+    pub fn source_at(&self, time: f64) -> f64 {
+        let speed = if self.speed > 0.0 { self.speed } else { 1.0 };
+        let local = (time - self.start).clamp(0.0, self.duration);
+        self.source_start + local * speed
     }
 
     /// Pulls every number back into the range a command would have held
@@ -1813,6 +1881,10 @@ pub struct Timeline {
     /// [`Timeline::clip_mut`]). Reading through the `Arc` is transparent.
     #[serde(deserialize_with = "wire::list")]
     pub clips: Vec<Arc<Clip>>,
+    /// Markers on the ruler, in no particular order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(deserialize_with = "wire::list")]
+    pub markers: Vec<Marker>,
     /// Fields this build does not know, kept so they round-trip.
     #[serde(flatten, default, skip_serializing_if = "Map::is_empty")]
     pub extra: Map<String, Value>,
@@ -1826,6 +1898,7 @@ impl Default for Timeline {
             video: VideoSettings::default(),
             tracks: Vec::new(),
             clips: Vec::new(),
+            markers: Vec::new(),
             extra: Map::new(),
         }
     }
@@ -2042,6 +2115,7 @@ impl Project {
                     })
                     .collect(),
                 clips: Vec::new(),
+                markers: Vec::new(),
                 extra: Map::new(),
             })],
             active_timeline_id: "TL1".to_owned(),

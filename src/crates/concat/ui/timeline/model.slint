@@ -87,6 +87,21 @@ export struct StripData {
 /// Positions are in *seconds*, not pixels. Zoom and pan are then a property
 /// change on the lanes and not a republish of the model — panning a timeline
 /// would otherwise rewrite every row of it on every frame of the drag.
+/// A marker as the lanes draw it: a flag on the ruler, or one riding a
+/// clip, with what the edit sheet shows for it.
+export struct MarkerData {
+    id: string,
+    /// The clip it rides on; empty for one on the ruler.
+    clip-id: string,
+    /// That clip's lane, as `ClipData.row`; -1 for the ruler.
+    row: int,
+    /// Where it is, in timeline seconds.
+    seconds: float,
+    name: string,
+    note: string,
+    color: color,
+}
+
 export struct ClipData {
     id: string,
     name: string,

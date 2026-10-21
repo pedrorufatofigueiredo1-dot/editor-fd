@@ -21,6 +21,7 @@ use crate::model::{
 mod audio;
 mod clips;
 pub use clips::why_not_merge;
+mod markers;
 mod media;
 mod properties;
 mod timelines;
@@ -725,6 +726,57 @@ pub enum Command {
         /// own tag.
         range: Option<ColorRange>,
     },
+    /// Drops a marker on the active timeline at `time`: on its ruler, or
+    /// on `clip_id` when one is named, where it is held in the clip's
+    /// source seconds and travels with the clip. Mints a "k" id. An
+    /// unknown clip is a no-op.
+    AddMarker {
+        /// The clip to mark; None marks the ruler.
+        #[serde(default)]
+        clip_id: Option<String>,
+        /// Timeline seconds, floored at 0; held inside the clip's span when
+        /// marking a clip.
+        time: f64,
+        /// Its name; none when absent.
+        #[serde(default)]
+        name: Option<String>,
+        /// A `#rrggbb` colour; the first of `MARKER_COLORS` when absent or
+        /// not a colour.
+        #[serde(default)]
+        color: Option<String>,
+        /// Its note; none when absent.
+        #[serde(default)]
+        note: Option<String>,
+    },
+    /// Changes a marker: only the fields present. An unknown marker is a
+    /// no-op.
+    UpdateMarker {
+        /// The clip it is on; None for the ruler's.
+        #[serde(default)]
+        clip_id: Option<String>,
+        /// The marker.
+        marker_id: String,
+        /// Moves it, in timeline seconds, with the clamps of `AddMarker`.
+        #[serde(default)]
+        time: Option<f64>,
+        /// A new name; empty clears it.
+        #[serde(default)]
+        name: Option<String>,
+        /// A new `#rrggbb` colour; anything else is ignored.
+        #[serde(default)]
+        color: Option<String>,
+        /// A new note; empty clears it.
+        #[serde(default)]
+        note: Option<String>,
+    },
+    /// Deletes a marker. An unknown marker is a no-op.
+    RemoveMarker {
+        /// The clip it is on; None for the ruler's.
+        #[serde(default)]
+        clip_id: Option<String>,
+        /// The marker.
+        marker_id: String,
+    },
 }
 
 /// What a command produced, beyond the new state: the ids it minted, so the
@@ -829,6 +881,12 @@ impl IdMint {
             }
             for clip in &timeline.clips {
                 self.adopt(&clip.id);
+                for marker in &clip.markers {
+                    self.adopt(&marker.id);
+                }
+            }
+            for marker in &timeline.markers {
+                self.adopt(&marker.id);
             }
         }
     }
@@ -1008,6 +1066,8 @@ impl Command {
                 .into_iter()
                 .flatten()
                 .copied()),
+            Command::AddMarker { time, .. } => bad([*time]),
+            Command::UpdateMarker { time, .. } => bad(*time),
             _ => false,
         }
     }
@@ -1105,5 +1165,8 @@ pub fn apply(
         | Command::RenameTimeline { .. }
         | Command::SelectTimeline { .. }
         | Command::MoveTimeline { .. }) => timelines::apply(project, mint, command),
+        command @ (Command::AddMarker { .. }
+        | Command::UpdateMarker { .. }
+        | Command::RemoveMarker { .. }) => markers::apply(project, mint, command),
     }
 }

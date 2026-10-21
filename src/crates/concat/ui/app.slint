@@ -26,6 +26,7 @@ import { ModelData, SettingsData, SettingsDialog, SystemFactData } from "dialogs
 import { ProjectDialog, ProjectSheetData } from "dialogs/project.slint";
 import { RelinkDialog, RelinkData, MissingMediaItem } from "dialogs/relink.slint";
 import { ConfirmData, ConfirmDialog } from "dialogs/confirm.slint";
+import { MarkerDialog, MarkerSheetData } from "dialogs/marker.slint";
 import { CaptionsDialog, CaptionsSheetData } from "dialogs/captions.slint";
 import { SpeechDialog, SpeechSheetData } from "dialogs/speech.slint";
 import { DockDivider, DockSide, SeatBox } from "dock.slint";
@@ -563,6 +564,12 @@ export component App inherits Window {
                 Editor.step-frames(event.modifiers.shift ? 10 : 1);
                 return accept;
             }
+            // M drops a marker, as in Filmora; the clip's mute it used to
+            // be moved up to Shift+M.
+            if (event.modifiers.shift && event.text.to-lowercase() == "m") {
+                Editor.shortcut("mute");
+                return accept;
+            }
             if (event.modifiers.shift) {
                 return reject;
             }
@@ -574,7 +581,7 @@ export component App inherits Window {
             if (letter == "b") { Editor.shortcut("split-tool"); return accept; }
             if (letter == "n") { Editor.shortcut("snap"); return accept; }
             if (letter == "s") { Editor.shortcut("preview-axis"); return accept; }
-            if (letter == "m") { Editor.shortcut("mute"); return accept; }
+            if (letter == "m") { Editor.marker-add("auto"); return accept; }
             // H is the hand: the pan tool, on and off, the key every
             // editor's canvas grabs with. It and J were the flips once;
             // flipping is the inspector's and the clip menu's now, and J
@@ -817,6 +824,23 @@ export component App inherits Window {
         data: root.confirm;
         confirmed => { root.confirm-accepted(); }
         dismissed => { root.confirm-dismissed(); }
+    }
+
+    // A marker's name, colour and note, from a double click on it.
+    in property <MarkerSheetData> marker-sheet;
+    callback marker-saved(name: string, note: string, color: int);
+    callback marker-deleted();
+    callback marker-dismissed();
+
+    MarkerDialog {
+        x: 0;
+        y: 0;
+        width: root.width;
+        height: root.height;
+        data: root.marker-sheet;
+        saved(name, note, color) => { root.marker-saved(name, note, color); }
+        deleted => { root.marker-deleted(); }
+        dismissed => { root.marker-dismissed(); }
     }
 
 

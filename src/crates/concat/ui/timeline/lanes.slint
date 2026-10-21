@@ -6,7 +6,7 @@ import { I18n } from "../i18n.slint";
 import { Theme } from "../theme/theme.slint";
 import { Fmt, Payload } from "../util.slint";
 import { Glyph, Icon } from "../icons.slint";
-import { ClipData, ClipKind, DropData, GapData, TimelineTool, TrackData } from "model.slint";
+import { ClipData, ClipKind, DropData, GapData, MarkerData, TimelineTool, TrackData } from "model.slint";
 import { ContextMenu, MenuItemData } from "../primitives/context-menu.slint";
 
 // The lanes: the ruler, the banded track stack, the clips on it, the playhead
@@ -1034,6 +1034,98 @@ component Clip inherits Rectangle {
     }
 }
 
+// ── a marker ─────────────────────────────────────────────────────────────────
+
+// A marker's flag, on the ruler or riding a clip's top edge. A click goes
+// to it, a drag moves it, a double click opens its sheet and the right
+// button its menu; the name shows beside it under the pointer.
+component MarkerFlag inherits TouchArea {
+    in property <color> tint;
+    in property <string> name;
+    /// How far the flag has been dragged from where it stands.
+    out property <length> drag-dx;
+    out property <bool> dragging;
+
+    callback picked();
+    callback dropped(dx: length);
+    callback edit();
+    callback context();
+
+    property <bool> held;
+
+    width: 13px;
+    height: 15px;
+    mouse-cursor: pointer;
+
+    Path {
+        x: 1px;
+        y: 1px;
+        width: parent.width - 2px;
+        height: parent.height - 2px;
+        viewbox-width: 11;
+        viewbox-height: 13;
+        commands: "M 0.5 0.5 L 10.5 0.5 L 10.5 8.5 L 5.5 12.5 L 0.5 8.5 Z";
+        fill: root.tint;
+        stroke: Theme.ruler;
+        stroke-width: 1px;
+    }
+
+    if root.has-hover && root.name != "": Rectangle {
+        x: root.width + 3px;
+        y: 0;
+        width: label.preferred-width + 10px;
+        height: root.height;
+        border-radius: Theme.r-sm;
+        background: Theme.raised;
+        border-width: 1px;
+        border-color: root.tint;
+
+        label := Text {
+            x: 5px;
+            text: root.name;
+            color: Theme.fg;
+            font-size: Theme.fs-xs;
+            vertical-alignment: center;
+        }
+    }
+
+    pointer-event(event) => {
+        // The right button opens the menu on its release and moves nothing,
+        // as on a clip.
+        if (event.button == PointerEventButton.right) {
+            if (event.kind == PointerEventKind.up) {
+                root.context();
+            }
+            return;
+        }
+        if (event.kind == PointerEventKind.down && event.button == PointerEventButton.left) {
+            self.held = true;
+        }
+        if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
+            if (self.held) {
+                if (self.dragging) {
+                    root.dropped(self.drag-dx);
+                } else if (event.kind == PointerEventKind.up) {
+                    root.picked();
+                }
+            }
+            self.held = false;
+            self.dragging = false;
+            self.drag-dx = 0;
+        }
+    }
+    moved => {
+        if (self.held) {
+            // A few pixels of slack, so a click that wobbles is a click.
+            if (self.dragging || Math.abs(self.mouse-x - self.pressed-x) > 3px) {
+                self.dragging = true;
+                self.drag-dx = self.mouse-x - self.pressed-x;
+            }
+        }
+    }
+    double-clicked => { root.edit(); }
+}
+
 // ── the lanes ────────────────────────────────────────────────────────────────
 
 export component Lanes inherits Rectangle {
@@ -1075,6 +1167,15 @@ export component Lanes inherits Rectangle {
     callback playhead-split();
     /// A ruler diamond dragged from one instant to another.
     callback key-mark-moved(from: float, to: float);
+    /// The markers: flags on the ruler, and on the clips they ride.
+    in property <[MarkerData]> markers;
+    /// A marker dragged to a new instant, on the frame grid.
+    callback marker-moved(id: string, clip-id: string, seconds: float);
+    /// A marker double-clicked: open its sheet.
+    callback marker-edit(id: string, clip-id: string);
+    /// A marker right-clicked: Rust fills the menu and bumps the token, as
+    /// for a clip.
+    callback marker-context(id: string, clip-id: string);
     /// The preview axis: the pointer is over the lanes at this instant,
     /// and then - a beat after it last was - it is not.
     callback hovered(seconds: float);
@@ -1261,6 +1362,19 @@ export component Lanes inherits Rectangle {
     /// The top of a row inside the lane area, scroll included.
     pure function row-y(row: int) -> length {
         return root.ruler-height + root.tracks[row].top - root.track-scroll;
+    }
+    /// Where a marker at `seconds` lands dragged `dx` along: on the frame
+    /// grid, so the playhead can stop on it.
+    pure function marker-at(seconds: float, dx: length) -> float {
+        return Math.max(0, Math.round((seconds + dx / root.px-per-second) * root.rate)
+            / root.rate);
+    }
+    /// A marker's right-click: the menu opens where the pointer is.
+    function marker-menu(id: string, clip-id: string) {
+        menu.request-x = wheel.mouse-x;
+        menu.request-y = wheel.mouse-y;
+        root.asked = true;
+        root.marker-context(id, clip-id);
     }
 
     // The ruler's tick ladder, from Rust. Zero means unbound, which draws no
@@ -1566,6 +1680,29 @@ export component Lanes inherits Rectangle {
             }
         }
 
+        // ── the clips' markers ───────────────────────────────────────────
+        //
+        // Over the clips, on the top edge of the one each rides, so they
+        // travel with it; a press on one is the marker's and not the clip's.
+        for mark in root.markers: MarkerFlag {
+            width: 11px;
+            height: 13px;
+            x: root.at(self.dragging ? root.marker-at(mark.seconds, self.drag-dx) : mark.seconds)
+                - self.width / 2;
+            y: mark.row >= 0 ? root.row-y(mark.row) + 5px : 0;
+            visible: mark.row >= 0 && self.x + self.width > 0 && self.x < root.width
+                && self.y + self.height > root.ruler-height && self.y < root.height;
+            tint: mark.color;
+            name: mark.name;
+
+            picked => { root.scrubbed(mark.seconds); }
+            dropped(dx) => {
+                root.marker-moved(mark.id, mark.clip-id, root.marker-at(mark.seconds, dx));
+            }
+            edit => { root.marker-edit(mark.id, mark.clip-id); }
+            context => { root.marker-menu(mark.id, mark.clip-id); }
+        }
+
         // ── the band being drawn ─────────────────────────────────────────
         if band.drawing: Rectangle {
             x: Math.min(band.from-x, band.to-x);
@@ -1822,6 +1959,24 @@ export component Lanes inherits Rectangle {
                         self.dragging = false;
                     }
                 }
+            }
+
+            // The timeline's markers, as flags along the ruler's top:
+            // above the scrub strip, so a press on one is the marker's.
+            for mark in root.markers: MarkerFlag {
+                x: root.at(self.dragging ? root.marker-at(mark.seconds, self.drag-dx)
+                    : mark.seconds) - self.width / 2;
+                y: 1px;
+                visible: mark.row < 0 && self.x + self.width > 0 && self.x < parent.width;
+                tint: mark.color;
+                name: mark.name;
+
+                picked => { root.scrubbed(mark.seconds); }
+                dropped(dx) => {
+                    root.marker-moved(mark.id, mark.clip-id, root.marker-at(mark.seconds, dx));
+                }
+                edit => { root.marker-edit(mark.id, mark.clip-id); }
+                context => { root.marker-menu(mark.id, mark.clip-id); }
             }
         }
 

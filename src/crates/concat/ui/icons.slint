@@ -64,6 +64,8 @@ export enum Glyph {
     /// the tray's picture verbs, freeze, mirror and rotate, behind one
     /// mark; and the quarter turn among them
     mirror-rotate,
+    /// the tray's marker button: a bookmark
+    marker,
     rotate,
     /// the turn the other way: a clip played backwards
     reverse,
@@ -772,6 +774,12 @@ export component Icon inherits Rectangle {
     if root.glyph == Glyph.mirror-rotate: Stroked {
         size: root.size; tint: root.tint; weight: root.weight;
         commands: "m3 7 5 5-5 5V7 M21 7l-5 5 5 5V7 M12 20v2 M12 14v2 M12 8v2 M12 2v2";
+    }
+
+    // lucide/bookmark
+    if root.glyph == Glyph.marker: Stroked {
+        size: root.size; tint: root.tint; weight: root.weight;
+        commands: "m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z";
     }
 
     // lucide/rotate-cw

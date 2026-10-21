@@ -42,6 +42,7 @@ pub(super) fn apply(
                 video,
                 tracks,
                 clips: Vec::new(),
+                markers: Vec::new(),
                 extra: Default::default(),
             }));
             project.active_timeline_id = id.clone();

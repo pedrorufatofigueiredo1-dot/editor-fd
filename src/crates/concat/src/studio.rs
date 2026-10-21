@@ -604,6 +604,8 @@ pub struct Models {
     pub key_editor_rows: Rc<VecModel<KeyRowData>>,
     /// The ruler's diamonds; see `Studio::key_marks`.
     pub key_marks: Rc<VecModel<f32>>,
+    /// The markers' flags; see `Studio::marker_rows`.
+    pub markers: Rc<VecModel<MarkerData>>,
     pub library_views: Rc<VecModel<LibraryViewData>>,
     pub menu: Rc<VecModel<MenuItemData>>,
     pub bar: Rc<VecModel<MenuItemData>>,
@@ -672,6 +674,7 @@ impl Models {
             key_rows: Rc::new(VecModel::default()),
             key_editor_rows: Rc::new(VecModel::default()),
             key_marks: Rc::new(VecModel::default()),
+            markers: Rc::new(VecModel::default()),
             library_views: Rc::new(VecModel::default()),
             menu: Rc::new(VecModel::default()),
             bar: Rc::new(VecModel::default()),
@@ -802,6 +805,10 @@ pub struct Studio {
     /// The media the bin's menu was opened on, when it was the bin's menu
     /// and not a clip's: the two share one set of rows and one token.
     pub menu_media: Option<String>,
+    /// The marker the menu was opened on, when it was a marker's.
+    pub menu_marker: Option<crate::marker::MarkerRef>,
+    /// The marker the marker sheet is open on.
+    pub marker_sheet: Option<crate::marker::MarkerRef>,
     pub menu_token: i32,
     /// The run of one kind of continuous message being folded into one
     /// line of the activity trail; see `note_activity`.
@@ -2034,6 +2041,8 @@ impl Studio {
             menu_bar_token: 0,
             menu_target: None,
             menu_media: None,
+            menu_marker: None,
+            marker_sheet: None,
             menu_token: 0,
             activity_burst: None,
             toast: ToastState::default(),
@@ -8121,6 +8130,8 @@ impl Studio {
         editor.set_timeline_current_tab(active as i32);
         editor.set_playhead(self.playhead);
         sync(&models.key_marks, self.key_marks());
+        sync(&models.markers, self.marker_rows());
+        editor.set_marker_on_clip(self.can_mark_clip());
         editor.set_scroll_left(self.lanes.scroll_left);
         editor.set_seconds_per_pixel(self.lanes.seconds_per_pixel);
         editor.set_duration_seconds(self.duration());
@@ -9663,6 +9674,7 @@ impl Studio {
         sync(&models.version_details, self.settings.version_details());
         app.set_relink(self.relink.data());
         app.set_confirm(self.confirm_data());
+        app.set_marker_sheet(self.marker_sheet_data());
 
         // The speech sheets, and the lists they choose from.
         let transcribers = installed(&self.settings.transcribers);
@@ -9743,6 +9755,9 @@ impl Studio {
     fn menu(&self) -> Vec<MenuItemData> {
         if let Some(id) = self.menu_media.as_deref() {
             return self.media_menu(id);
+        }
+        if let Some(marker) = self.menu_marker.as_ref() {
+            return self.marker_menu_rows(marker);
         }
         let Some(clip) = self.menu_target.as_ref().and_then(|id| self.clip(id)) else {
             return Vec::new();
@@ -9879,11 +9894,20 @@ impl Studio {
             ));
             rows.push(rule());
         }
+        // A marker riding the clip, at the playhead; M at the keyboard.
+        let over = clip.start <= playhead && playhead <= clip.start + clip.duration;
+        rows.push(action(
+            "add-marker",
+            t("marker.addHere"),
+            Glyph::Marker,
+            "M",
+            !locked && over,
+        ));
         let audible = clip.kind != model::ClipKind::Image;
         rows.push(check(
             "mute",
             &t("studio.mute"),
-            "M",
+            &platform::keys(&["Shift", "M"]),
             clip.volume <= 0.0,
             !locked && audible,
         ));
@@ -10562,6 +10586,7 @@ impl Studio {
                 self.inspector_jump = (self.inspector_jump.0 + 1, "Video", "Enhance");
             }
             "export-audio" => self.export_clip_audio(id),
+            "add-marker" => self.mark_clip_here(id),
             "detach" => self.detach_audio(&clip),
             "reattach" => {
                 self.apply(Command::ReattachAudio {
