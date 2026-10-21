@@ -450,6 +450,8 @@ export component Seat inherits Rectangle {
             band-selected(a, b, c, d, additive) => { Editor.band-selected(a, b, c, d, additive); }
             gap: Editor.gap;
             gap-pressed(seconds, y) => { Editor.gap-pressed(seconds, y); }
+            floor-context => { Editor.floor-context(); }
+            ai-ranges: Editor.ai-ranges;
             scrolled(seconds) => { Editor.scrolled(seconds); }
             drop: Editor.drop;
             drag-hovered(payload, seconds, row) => {

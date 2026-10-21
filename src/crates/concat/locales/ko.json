@@ -2,6 +2,11 @@
   "_": {
     "name": "한국어"
   },
+  "aiMarks.clear": "AI 표시 모두 지우기",
+  "aiMarks.couldNotSave": "AI 표시를 저장할 수 없습니다: {0}",
+  "aiMarks.mark": "AI용으로 표시",
+  "aiMarks.range": "빈 구간",
+  "aiMarks.unmark": "AI 표시 해제",
   "captions.addCaptions": "Add captions",
   "captions.addedCaptions": "자막 {0}개를 추가했습니다",
   "captions.captions": "자막",

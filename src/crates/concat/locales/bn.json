@@ -2,6 +2,11 @@
   "_": {
     "name": "বাংলা"
   },
+  "aiMarks.clear": "AI চিহ্নগুলো মুছুন",
+  "aiMarks.couldNotSave": "AI চিহ্নগুলো সংরক্ষণ করা যায়নি: {0}",
+  "aiMarks.mark": "AI-এর জন্য চিহ্নিত করুন",
+  "aiMarks.range": "ফাঁকা অংশ",
+  "aiMarks.unmark": "AI চিহ্ন সরান",
   "captions.addCaptions": "ক্যাপশন যোগ করুন",
   "captions.addedCaptions": "{0}টি ক্যাপশন যোগ করা হয়েছে",
   "captions.captions": "ক্যাপশন",

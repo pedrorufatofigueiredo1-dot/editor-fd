@@ -2,6 +2,11 @@
   "_": {
     "name": "Deutsch"
   },
+  "aiMarks.clear": "KI-Markierungen löschen",
+  "aiMarks.couldNotSave": "KI-Markierungen konnten nicht gespeichert werden: {0}",
+  "aiMarks.mark": "Für die KI markieren",
+  "aiMarks.range": "Leerer Abschnitt",
+  "aiMarks.unmark": "KI-Markierung entfernen",
   "captions.addCaptions": "Add captions",
   "captions.addedCaptions": "{0} Untertitel hinzugefügt",
   "captions.captions": "Untertitel",

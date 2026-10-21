@@ -2,6 +2,11 @@
   "_": {
     "name": "فارسی"
   },
+  "aiMarks.clear": "پاک کردن علامت‌های هوش مصنوعی",
+  "aiMarks.couldNotSave": "ذخیرهٔ علامت‌های هوش مصنوعی ممکن نشد: {0}",
+  "aiMarks.mark": "علامت‌گذاری برای هوش مصنوعی",
+  "aiMarks.range": "بازهٔ خالی",
+  "aiMarks.unmark": "برداشتن علامت هوش مصنوعی",
   "captions.addCaptions": "افزودن زیرنویس",
   "captions.addedCaptions": "{0} زیرنویس اضافه شد",
   "captions.captions": "زیرنویس‌ها",

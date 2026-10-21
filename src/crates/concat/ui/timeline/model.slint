@@ -98,6 +98,9 @@ export struct ClipData {
     /// seconds of timeline occupied
     duration: float,
     selected: bool,
+    /// The number the clip is marked with for the AI, drawn on it as a
+    /// badge; 0 when it is not marked.
+    ai-mark: int,
     /// The transition on the cut into this clip is the one selected:
     /// picked on its own, with the clip itself unselected.
     transition-selected: bool,
@@ -161,6 +164,16 @@ export struct DropData {
 /// a gap.
 export struct GapData {
     active: bool,
+    start: float,
+    duration: float,
+    row: int,
+}
+
+/// A stretch of one lane marked for the AI, drawn with its number the way
+/// a marked clip wears its own. Published by Rust from the marks kept
+/// beside the project.
+export struct AiRangeData {
+    number: int,
     start: float,
     duration: float,
     row: int,

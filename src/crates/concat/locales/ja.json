@@ -2,6 +2,11 @@
   "_": {
     "name": "日本語"
   },
+  "aiMarks.clear": "AIマークをすべて消去",
+  "aiMarks.couldNotSave": "AIマークを保存できませんでした: {0}",
+  "aiMarks.mark": "AI用にマーク",
+  "aiMarks.range": "空きの区間",
+  "aiMarks.unmark": "AIマークを外す",
   "captions.addCaptions": "字幕を追加",
   "captions.addedCaptions": "{0} 件の字幕を追加しました",
   "captions.captions": "字幕",

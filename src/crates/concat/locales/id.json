@@ -2,6 +2,11 @@
   "_": {
     "name": "Bahasa Indonesia"
   },
+  "aiMarks.clear": "Bersihkan tanda AI",
+  "aiMarks.couldNotSave": "Tidak dapat menyimpan tanda AI: {0}",
+  "aiMarks.mark": "Tandai untuk AI",
+  "aiMarks.range": "Rentang kosong",
+  "aiMarks.unmark": "Hapus tanda AI",
   "captions.addCaptions": "Tambahkan subtitel",
   "captions.addedCaptions": "{0} subtitel ditambahkan",
   "captions.captions": "Subtitel",

@@ -2,6 +2,11 @@
   "_": {
     "name": "English"
   },
+  "aiMarks.clear": "Clear AI marks",
+  "aiMarks.couldNotSave": "Could not save the AI marks: {0}",
+  "aiMarks.mark": "Mark for the AI",
+  "aiMarks.range": "Empty stretch",
+  "aiMarks.unmark": "Unmark for the AI",
   "captions.addCaptions": "Add captions",
   "captions.addedCaptions": "Added {0} captions",
   "captions.captions": "Captions",

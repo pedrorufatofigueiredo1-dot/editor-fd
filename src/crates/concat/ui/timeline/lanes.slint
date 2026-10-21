@@ -6,7 +6,9 @@ import { I18n } from "../i18n.slint";
 import { Theme } from "../theme/theme.slint";
 import { Fmt, Payload } from "../util.slint";
 import { Glyph, Icon } from "../icons.slint";
-import { ClipData, ClipKind, DropData, GapData, TimelineTool, TrackData } from "model.slint";
+import {
+    AiRangeData, ClipData, ClipKind, DropData, GapData, TimelineTool, TrackData,
+} from "model.slint";
 import { ContextMenu, MenuItemData } from "../primitives/context-menu.slint";
 
 // The lanes: the ruler, the banded track stack, the clips on it, the playhead
@@ -52,6 +54,44 @@ global Paint {
             : kind == ClipKind.filter ? Glyph.filter
             : kind == ClipKind.shape ? Glyph.shapes
             : Glyph.film;
+    }
+}
+
+/// How wide a mark's badge is for its number: one width per count of
+/// digits rather than the text's own, so a clip's name can make room for
+/// the badge without measuring it.
+global AiBadges {
+    public pure function width(number: int) -> length {
+        return number < 10 ? 16px : number < 100 ? 22px : 28px;
+    }
+}
+
+// The number a clip or a stretch of lane marked for the AI wears: what the
+// person says to the assistant - "the 2" - written where they can see it.
+// A pill in no hue at all, with the number in heavy type and a ring that
+// stands it off whatever header it sits on. Full size at any zoom: a clip
+// narrower than its badge still wears all of it.
+component AiBadge inherits Rectangle {
+    in property <int> number;
+    width: AiBadges.width(root.number);
+    height: 16px;
+    border-radius: 8px;
+    background: Theme.ai-mark;
+    border-width: 1px;
+    border-color: Theme.ai-mark-ring;
+
+    Text {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+        text: "\{root.number}";
+        color: Theme.ai-mark-ink;
+        // Not a step of the scale: sized to the pill, as the `fx` chip's is.
+        font-size: 11px;
+        font-weight: 800;
+        horizontal-alignment: center;
+        vertical-alignment: center;
     }
 }
 
@@ -174,7 +214,10 @@ component Clip inherits Rectangle {
     /// An all-strip clip wears its kind's mark before its name, the way a
     /// look or a title is told from a sound on the lanes at a glance.
     property <bool> marked: root.all-strip;
-    property <length> text-x: root.marked ? 22px : 7px;
+    /// Room at the head of the strip for the badge the lanes draw over a
+    /// clip marked for the AI; see AiBadge.
+    property <length> ai-w: root.item.ai-mark > 0 ? AiBadges.width(root.item.ai-mark) + 3px : 0px;
+    property <length> text-x: root.ai-w + (root.marked ? 22px : 7px);
     /// The `fx` chip: a square sized to the strip it sits in, capped so a
     /// tall filter bar wears a rounded square and not a tall pill. A video
     /// header is too short for a square the word fits, so there it keeps
@@ -435,7 +478,7 @@ component Clip inherits Rectangle {
         background: root.mark;
 
         if root.marked && root.width > 20px: Icon {
-            x: 6px;
+            x: root.ai-w + 6px;
             y: (parent.height - self.height) / 2;
             glyph: root.badge;
             size: 11px;
@@ -1156,6 +1199,12 @@ export component Lanes inherits Rectangle {
     callback gap-pressed(seconds: float, y: length);
     /// The picked empty stretch of lane; see GapData.
     in property <GapData> gap;
+    /// A right-click on an empty lane, after the press picked the gap
+    /// under it: the caller fills the menu and bumps `menu-token`, as for
+    /// `clip-context`.
+    callback floor-context();
+    /// The stretches of lane marked for the AI; see AiRangeData.
+    in property <[AiRangeData]> ai-ranges;
     callback track-scrolled(pixels: length);
     callback zoomed(factor: float, anchor-seconds: float);
 
@@ -1410,6 +1459,31 @@ export component Lanes inherits Rectangle {
                 && self.y + self.height > root.ruler-height && self.y < root.height;
         }
 
+        // ── the stretches marked for the AI ──────────────────────────────
+        //
+        // Outlined in the badge's colour rather than the accent, so a mark
+        // is never read as the gap picked, and wearing its number at its
+        // head - held on screen while any of the stretch is.
+        for range in root.ai-ranges: Rectangle {
+            x: root.at(range.start);
+            y: root.row-y(range.row) + 4px;
+            width: Math.max(2px, range.duration * root.px-per-second);
+            height: Math.max(2px, root.tracks[range.row].height - 10px);
+            border-radius: Theme.r-sm;
+            background: Theme.ai-mark.with-alpha(0.08);
+            border-width: 1px;
+            border-color: Theme.ai-mark.with-alpha(0.8);
+            visible: range.row < root.tracks.length
+                && self.x + self.width > 0 && self.x < root.width
+                && self.y + self.height > root.ruler-height && self.y < root.height;
+
+            AiBadge {
+                number: range.number;
+                x: Math.max(3px, Math.min(-parent.x + 3px, parent.width - self.width - 3px));
+                y: (parent.height - self.height) / 2;
+            }
+        }
+
         // Declared before the clips, so each clip takes its own press and what
         // is left is the empty lane — which starts a band.
         band := TouchArea {
@@ -1446,7 +1520,10 @@ export component Lanes inherits Rectangle {
                         // band: the playhead goes where it landed, as on
                         // the ruler. The empty band still clears the
                         // selection below.
+                        // A right-click opens the menu and leaves the
+                        // playhead where it was, as on a clip.
                         if (event.kind == PointerEventKind.up
+                            && event.button != PointerEventButton.right
                             && Math.abs(self.to-x - self.from-x) <= 4px
                             && Math.abs(self.to-y - self.from-y) <= 4px) {
                             root.scrubbed(Math.max(0, root.seconds-at(self.from-x)));
@@ -1465,6 +1542,19 @@ export component Lanes inherits Rectangle {
                             && Math.abs(self.to-y - self.from-y) <= 4px) {
                             root.gap-pressed(root.seconds-at(self.from-x),
                                 root.stack-y(self.from-y));
+                        }
+                        // And a right-click asks for the floor's menu once
+                        // the gap under it is picked: marking that gap for
+                        // the AI, and clearing the marks. Placed and asked
+                        // for as a clip's menu is; see `context-requested`.
+                        if (event.kind == PointerEventKind.up
+                            && event.button == PointerEventButton.right
+                            && Math.abs(self.to-x - self.from-x) <= 4px
+                            && Math.abs(self.to-y - self.from-y) <= 4px) {
+                            menu.request-x = wheel.mouse-x;
+                            menu.request-y = wheel.mouse-y;
+                            root.asked = true;
+                            root.floor-context();
                         }
                     } else if (root.finger && root.finger-axis == 0
                         && event.kind == PointerEventKind.up) {
@@ -1564,6 +1654,28 @@ export component Lanes inherits Rectangle {
                 root.asked = true;
                 root.clip-context(entry.id);
             }
+        }
+
+        // ── the marks for the AI on the clips ────────────────────────────
+        //
+        // Over every clip rather than inside its own: a clip narrower than
+        // its badge - the whole cut zoomed out - still wears all of it, and
+        // the clip after it does not cover it. Centred on the clip's
+        // strip, which is the whole clip for a title, a filter or a shape,
+        // and held at the lanes' edge while the clip runs on past it.
+        for entry in root.clips: AiBadge {
+            property <length> clip-x: root.at(entry.start);
+            property <length> clip-h: Math.max(2px, root.tracks[entry.row].height - 10px);
+            property <length> strip-h: entry.kind == ClipKind.text
+                || entry.kind == ClipKind.filter || entry.kind == ClipKind.shape
+                ? self.clip-h : Math.min(17px, self.clip-h);
+            number: entry.ai-mark;
+            x: Math.max(self.clip-x + 3px,
+                Math.min(3px, self.clip-x + entry.duration * root.px-per-second - self.width - 3px));
+            y: root.row-y(entry.row) + 4px + (self.strip-h - self.height) / 2;
+            visible: entry.ai-mark > 0 && entry.row < root.tracks.length
+                && self.x + self.width > 0 && self.x < root.width
+                && self.y + self.height > root.ruler-height && self.y < root.height;
         }
 
         // ── the band being drawn ─────────────────────────────────────────

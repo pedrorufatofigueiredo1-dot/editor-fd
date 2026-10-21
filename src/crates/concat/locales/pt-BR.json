@@ -2,6 +2,11 @@
   "_": {
     "name": "Português (Brasil)"
   },
+  "aiMarks.clear": "Limpar marcações da IA",
+  "aiMarks.couldNotSave": "Não foi possível salvar as marcações da IA: {0}",
+  "aiMarks.mark": "Marcar para a IA",
+  "aiMarks.range": "Trecho vazio",
+  "aiMarks.unmark": "Desmarcar da IA",
   "captions.addCaptions": "Add captions",
   "captions.addedCaptions": "{0} legendas adicionadas",
   "captions.captions": "Legendas",

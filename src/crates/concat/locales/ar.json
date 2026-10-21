@@ -2,6 +2,11 @@
   "_": {
     "name": "العربية"
   },
+  "aiMarks.clear": "مسح تحديدات الذكاء الاصطناعي",
+  "aiMarks.couldNotSave": "تعذّر حفظ تحديدات الذكاء الاصطناعي: {0}",
+  "aiMarks.mark": "تحديد للذكاء الاصطناعي",
+  "aiMarks.range": "مقطع فارغ",
+  "aiMarks.unmark": "إزالة تحديد الذكاء الاصطناعي",
   "captions.addCaptions": "إضافة تسميات توضيحية",
   "captions.addedCaptions": "تمت إضافة {0} من التسميات التوضيحية",
   "captions.captions": "تسميات توضيحية",

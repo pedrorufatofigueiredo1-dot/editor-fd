@@ -2,6 +2,11 @@
   "_": {
     "name": "Tiếng Việt"
   },
+  "aiMarks.clear": "Xóa các đánh dấu AI",
+  "aiMarks.couldNotSave": "Không thể lưu các đánh dấu AI: {0}",
+  "aiMarks.mark": "Đánh dấu cho AI",
+  "aiMarks.range": "Đoạn trống",
+  "aiMarks.unmark": "Bỏ đánh dấu AI",
   "captions.addCaptions": "Thêm phụ đề",
   "captions.addedCaptions": "Đã thêm {0} phụ đề",
   "captions.captions": "Phụ đề",

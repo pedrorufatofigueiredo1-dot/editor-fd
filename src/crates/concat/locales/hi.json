@@ -2,6 +2,11 @@
   "_": {
     "name": "हिन्दी"
   },
+  "aiMarks.clear": "AI चिह्न साफ़ करें",
+  "aiMarks.couldNotSave": "AI चिह्न सहेजे नहीं जा सके: {0}",
+  "aiMarks.mark": "AI के लिए चिह्नित करें",
+  "aiMarks.range": "खाली हिस्सा",
+  "aiMarks.unmark": "AI चिह्न हटाएँ",
   "captions.addCaptions": "कैप्शन जोड़ें",
   "captions.addedCaptions": "{0} कैप्शन जोड़े गए",
   "captions.captions": "कैप्शन",

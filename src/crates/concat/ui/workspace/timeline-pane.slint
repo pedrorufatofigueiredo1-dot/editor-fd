@@ -10,7 +10,7 @@ import { ContextMenu, MenuItemData, MenuMetrics, MenuRow } from "../primitives/c
 import { HairlineSplitter } from "splitter.slint";
 import { ThinHScrollbar, ThinScrollbar } from "../primitives/scrollbar.slint";
 import {
-    ClipData, DropData, GapData, TimelineTabData, TimelineTool, TrackData, TrackSize,
+    AiRangeData, ClipData, DropData, GapData, TimelineTabData, TimelineTool, TrackData, TrackSize,
 } from "../timeline/model.slint";
 import { TimelineTabs } from "../timeline/tabs.slint";
 import { TimelineTray } from "../timeline/tray.slint";
@@ -118,6 +118,10 @@ export component TimelinePane inherits Rectangle {
     /// GapData.
     in property <GapData> gap;
     callback gap-pressed(seconds: float, y: length);
+    /// A right-click on an empty lane; see Lanes.floor-context.
+    callback floor-context();
+    /// The stretches of lane marked for the AI. See AiRangeData.
+    in property <[AiRangeData]> ai-ranges;
 
     /// A library card dragged over the lanes, and let go of. See DropData.
     in property <DropData> drop;
@@ -448,6 +452,8 @@ export component TimelinePane inherits Rectangle {
                 }
                 gap: root.gap;
                 gap-pressed(seconds, y) => { root.gap-pressed(seconds, y); }
+                floor-context => { root.floor-context(); }
+                ai-ranges: root.ai-ranges;
                 scrolled(seconds) => { root.scrolled(seconds); }
 
                 drop: root.drop;

@@ -2,6 +2,11 @@
   "_": {
     "name": "Hrvatski"
   },
+  "aiMarks.clear": "Očisti AI oznake",
+  "aiMarks.couldNotSave": "Nije moguće spremiti AI oznake: {0}",
+  "aiMarks.mark": "Označi za AI",
+  "aiMarks.range": "Prazan dio",
+  "aiMarks.unmark": "Ukloni AI oznaku",
   "captions.addCaptions": "Dodaj titlove",
   "captions.addedCaptions": "Dodano {0} titlova",
   "captions.captions": "Titlovi",
