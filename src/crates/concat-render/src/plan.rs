@@ -352,7 +352,13 @@ impl PlannedLayer {
         let (scale_x, scale_y) = geometry.scale;
         // One output pixel, in the picture's shorter side as it is drawn.
         let shown = (width * scale_x).min(height * scale_y).max(1.0);
-        shape.uniform(width, height, 1.0 / shown)
+        // Measured on the picture as it is pulled, so a pull does not bend
+        // the mask's shape; see `uniform_stretched`.
+        let stretch = (
+            self.transform.stretch_x as f32,
+            self.transform.stretch_y as f32,
+        );
+        shape.uniform_stretched(width, height, stretch, 1.0 / shown)
     }
 
     /// The transitions folded; see [`Shading`].

@@ -1398,7 +1398,11 @@ fn filled(
         };
         let width = seen(source.width(), crop.left + crop.right);
         let height = seen(source.height(), crop.top + crop.bottom);
-        filled.mask = pen_matte_cached(&shape, &corners, width, height);
+        let stretch = (
+            filled.transform.stretch_x as f32,
+            filled.transform.stretch_y as f32,
+        );
+        filled.mask = pen_matte_cached(&shape, &corners, width, height, stretch);
         filled.shape = None;
     }
     filled
@@ -1414,6 +1418,7 @@ fn pen_matte_cached(
     corners: &std::sync::Arc<[[f32; 2]]>,
     width: u32,
     height: u32,
+    stretch: (f32, f32),
 ) -> Option<std::sync::Arc<Frame>> {
     use std::collections::HashMap;
     use std::hash::{Hash, Hasher};
@@ -1435,12 +1440,15 @@ fn pen_matte_cached(
         number.to_bits().hash(&mut hasher);
     }
     (mask.invert, width, height).hash(&mut hasher);
+    (stretch.0.to_bits(), stretch.1.to_bits()).hash(&mut hasher);
     let key = hasher.finish();
     let cache = CACHE.get_or_init(Default::default);
     if let Some(hit) = cache.lock().ok().and_then(|kept| kept.get(&key).cloned()) {
         return Some(hit);
     }
-    let matte = Arc::new(concat_core::mask::pen_matte(mask, corners, width, height)?);
+    let matte = Arc::new(concat_core::mask::pen_matte(
+        mask, corners, width, height, stretch,
+    )?);
     if let Ok(mut kept) = cache.lock() {
         if kept.len() >= 32 {
             kept.clear();

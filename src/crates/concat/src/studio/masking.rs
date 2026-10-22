@@ -11,9 +11,11 @@
 //! the grips, and backwards, for a drag. All in frame pixels, where a turn
 //! is a turn; the overlay gets fractions of the frame.
 //!
-//! A picture pulled along one axis (`stretch_x` != `stretch_y`) draws its
-//! mask pulled along with it, which a rotated outline here does not follow:
-//! the grips are placed for the unpulled picture. Rare, and said here.
+//! A picture pulled along one axis (`stretch_x` != `stretch_y`) moves its
+//! mask with it but does not bend it: the compositor measures the mask on
+//! the picture as it is pulled, in the unpulled shorter side
+//! (`ShapeMask::uniform_stretched`), which is how the outline and the grips
+//! here are measured too.
 
 use concat_core::mask::{self, MaskUniform};
 use concat_project::model::{ClipMask, MaskShape};

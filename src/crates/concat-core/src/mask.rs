@@ -202,6 +202,33 @@ impl ShapeMask {
         }
     }
 
+    /// [`ShapeMask::uniform`] for a picture pulled by `stretch` along its
+    /// own axes as it is drawn: the mask is measured on the picture as it
+    /// is seen pulled, in the unpulled picture's shorter side, so a pull
+    /// moves the mask with the picture but never bends its shape - a circle
+    /// stays round, a drawing keeps the shape it was drawn in - and the
+    /// overlay's outline, which is measured that way, is the edge kept.
+    pub fn uniform_stretched(
+        &self,
+        width: f32,
+        height: f32,
+        stretch: (f32, f32),
+        pixel: f32,
+    ) -> MaskUniform {
+        let mut uniform = self.uniform(width, height, pixel);
+        let short = width.min(height).max(1.0);
+        let pull = |value: f32| {
+            if value.is_finite() {
+                value.abs().max(1e-6)
+            } else {
+                1.0
+            }
+        };
+        uniform.c[2] = width * pull(stretch.0) / short;
+        uniform.c[3] = height * pull(stretch.1) / short;
+        uniform
+    }
+
     /// How much of the picture is kept at `u`, `v` - `0..1` across it as
     /// it is seen - over a picture `width` by `height`, with `pixel` as in
     /// [`ShapeMask::uniform`].
@@ -402,6 +429,7 @@ pub fn pen_matte(
     corners: &[[f32; 2]],
     width: u32,
     height: u32,
+    stretch: (f32, f32),
 ) -> Option<crate::frame::Frame> {
     if width == 0 || height == 0 {
         return None;
@@ -412,7 +440,7 @@ pub fn pen_matte(
     let mh = ((height as f32 * fit).round() as u32).max(1);
     // One matte texel in the picture's shorter side: the narrowest edge.
     let pixel = 1.0 / mw.min(mh) as f32;
-    let uniform = mask.uniform(width as f32, height as f32, pixel);
+    let uniform = mask.uniform_stretched(width as f32, height as f32, stretch, pixel);
     let shape = PenShape::of(&uniform, corners);
     let mut pixels = vec![255u8; (mw * mh * 4) as usize];
     for row in 0..mh {
@@ -672,7 +700,7 @@ mod pen_tests {
 
     #[test]
     fn a_pen_matte_is_in_the_pictures_aspect_and_keeps_by_its_alpha() {
-        let matte = pen_matte(&pen(), &RIGHT_HALF, 1920, 1080).expect("a matte");
+        let matte = pen_matte(&pen(), &RIGHT_HALF, 1920, 1080, (1.0, 1.0)).expect("a matte");
         assert_eq!((matte.width(), matte.height()), (768, 432));
         let alpha = |x: u32, y: u32| matte.pixels()[((y * 768 + x) * 4 + 3) as usize];
         // The box is the picture's height square in the middle of a wide
@@ -680,6 +708,26 @@ mod pen_tests {
         assert_eq!(alpha(500, 216), 255);
         assert_eq!(alpha(300, 216), 0);
         assert_eq!(alpha(700, 216), 0, "past the box");
-        assert!(pen_matte(&pen(), &RIGHT_HALF, 0, 10).is_none());
+        assert!(pen_matte(&pen(), &RIGHT_HALF, 0, 10, (1.0, 1.0)).is_none());
+    }
+
+    /// A picture pulled to twice its width keeps a round circle: the edge
+    /// is as far from the centre across as down, in the pixels drawn.
+    #[test]
+    fn a_pulled_picture_does_not_bend_its_mask() {
+        let circle = ShapeMask {
+            shape: MaskShape::Circle,
+            ..ShapeMask::default()
+        };
+        let uniform = circle.uniform_stretched(100.0, 100.0, (2.0, 1.0), 0.01);
+        // Radius 0.33 of the unpulled short side: 33 of the 200 pixels
+        // drawn across is u 0.5 + 0.165; 33 of the 100 down is v 0.83.
+        assert!((coverage(&uniform, 0.5 + 0.165, 0.5) - 0.5).abs() < 1e-3);
+        assert!((coverage(&uniform, 0.5, 0.5 + 0.33) - 0.5).abs() < 1e-3);
+        // Unpulled it is the uniform it always was.
+        assert_eq!(
+            circle.uniform_stretched(100.0, 100.0, (1.0, 1.0), 0.01),
+            circle.uniform(100.0, 100.0, 0.01)
+        );
     }
 }
