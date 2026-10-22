@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// SPDX-FileCopyrightText: 2026 Jareer and Concat contributors
+// SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
 
 //! Media as the window sees it: what a file is, its waveform, its
 //! filmstrip, a project's poster - and the caches beside the project that
@@ -140,7 +140,8 @@ impl MediaSummary {
 
 /// Extensions Concat is willing to treat as stills.
 const IMAGE_EXTENSIONS: &[&str] = &[
-    "png", "jpg", "jpeg", "webp", "bmp", "tif", "tiff", "avif", "heic", "heif", "gif",
+    "png", "jpg", "jpeg", "webp", "bmp", "tif", "tiff", "avif", "heic", "heif", "gif", "svg",
+    "svgz",
 ];
 
 /// Decides whether a file is footage, sound or a still.
@@ -705,6 +706,22 @@ pub fn poster_frame(project: &str) -> Result<Vec<u8>, String> {
         let _ = std::fs::remove_file(parent.join("preview.jpg"));
     }
     Ok(bytes)
+}
+
+/// How long a project's active timeline runs, in seconds: where its last
+/// clip ends. For the launch screen's cards, read on a worker beside the
+/// poster; None when the manifest cannot be read as a project.
+pub fn timeline_seconds(project: &str) -> Option<f64> {
+    let manifest = projects::manifest_path(Path::new(project));
+    let text = std::fs::read_to_string(manifest).ok()?;
+    let document: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let project = concat_project::from_document(&document)?;
+    let timeline = project
+        .timelines
+        .iter()
+        .find(|timeline| timeline.id == project.active_timeline_id)
+        .or_else(|| project.timelines.first())?;
+    Some(timeline.duration())
 }
 
 /// Below this mean brightness, out of 255, a frame is a black one: a

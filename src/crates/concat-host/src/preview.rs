@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// SPDX-FileCopyrightText: 2026 Jareer and Concat contributors
+// SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
 
 //! The paused monitor's true frame.
 //!
@@ -370,6 +370,17 @@ impl Monitor {
             1.0 / fps,
             moments,
         );
+    }
+
+    /// Forgets the kept plan, so the next frame builds it again: for when
+    /// something the plan read from the project folder - a stabilized
+    /// clip's measured movement - has changed under a clip list that has
+    /// not.
+    pub fn forget_plan(&self) {
+        *self
+            .plan
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
     }
 
     /// Forgets every cached frame, reader and plan, for when the project

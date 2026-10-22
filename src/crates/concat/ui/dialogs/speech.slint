@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// SPDX-FileCopyrightText: 2026 Jareer and Concat contributors
+// SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
 
 import { I18n } from "../i18n.slint";
 import { Theme } from "../theme/theme.slint";
 import { Glyph, Icon } from "../icons.slint";
-import { Button, CopyChip, DialogRow, DialogSection, Modal, Progress } from "../primitives/modal.slint";
+import { Button, CopyChip, DialogRow, DialogSection, Field, Modal, Progress } from "../primitives/modal.slint";
 import { SegmentedControl } from "../primitives/segmented-control.slint";
 import { Select } from "../primitives/select.slint";
+import { AvatarData } from "../primitives/avatar.slint";
 import { Rail } from "../inspector/controls.slint";
 import { Wave } from "../primitives/wave.slint";
 import { Fmt } from "../util.slint";
@@ -26,12 +27,19 @@ import { Fmt } from "../util.slint";
 // from a title the script is the title's words; opened from the menu it is
 // whatever you type. While it runs the sheet is the progress report, with a
 // clock beside it.
+//
+// On a desk it is a card floating over the editor (see Modal.floating), so
+// the timeline stays in reach while a read runs; closed, the read goes on,
+// and opened again the card shows it. On a phone it is a sheet.
 
 export struct SpeechSheetData {
     open: bool,
     text: string,
     /// Row in the voice list.
     voice: int,
+    /// How many named voices the list holds: past them, the last row is
+    /// "Clone from a sample…" when the model reads in a recording.
+    voice-count: int,
     /// Row in the installed voice model list.
     model: int,
     /// 0 Kokoro, 1 Pocket TTS, 2 Chatterbox: which controls the model has.
@@ -56,14 +64,31 @@ export struct SpeechSheetData {
     /// Seconds into that sample the speaking starts.
     reference-start: float,
     running: bool,
-    /// 0..1, as sentences complete.
+    /// 0..1: where the read surely is.
     progress: float,
+    /// Where the step under way leaves the bar, 0..1.
+    ceiling: float,
+    /// Seconds that step should take.
+    step: float,
+    /// Seconds of the run still to go, once the work has been timed;
+    /// negative before.
+    left: float,
+    /// What the run is doing, in words.
+    stage: string,
     /// A voice model is installed.
     ready: bool,
     /// "About 0:12 in Heart", or what stops it being read.
     estimate: string,
     /// Why the last run failed, when it did.
     message: string,
+    /// The style the speech lands in, by name, or empty for none: its
+    /// effects go on the clip.
+    style: string,
+    /// What the sample is to be saved as, and the picture's file name.
+    save-name: string,
+    save-picture: string,
+    /// A save running.
+    saving: bool,
 }
 
 // A list of recordings to pick a voice from, each drawn as its waveform
@@ -217,6 +242,8 @@ export component SpeechDialog inherits Modal {
     in property <[string]> voices;
     /// "American · female", beside each voice.
     in property <[string]> voice-details;
+    /// Each voice's avatar: its picture, or its first letter in its colour.
+    in property <[AvatarData]> voice-avatars;
     /// The bin's recordings a voice can be taken from: their names, their
     /// envelopes as path commands, and their lengths.
     in property <[string]> samples;
@@ -238,6 +265,13 @@ export component SpeechDialog inherits Modal {
     pure callback insert-tag(text: string, tag: string, at: int) -> string;
     callback begin();
     callback cancel();
+    /// The sample kept as a voice of the user's own: its name typed, a
+    /// picture asked for, the save itself.
+    callback save-name-edited(name: string);
+    callback pick-picture();
+    callback save-voice();
+    /// The style taken off.
+    callback clear-style();
 
     open: root.data.open;
     title: I18n.t("speech.textToSpeech");
@@ -280,7 +314,7 @@ export component SpeechDialog inherits Modal {
     property <bool> has-reference: !root.data.use-sample || root.data.sample-name != "";
     /// There is a voice to read with: a sample, or a named one on the list.
     /// Chatterbox names none until Pocket's recordings are on disk.
-    property <bool> has-voice: root.data.use-sample || root.voices.length > 0;
+    property <bool> has-voice: root.data.use-sample || root.data.voice-count > 0;
 
     /// Seconds since the run began; the reference beside the bar.
     property <int> elapsed;
@@ -396,23 +430,50 @@ export component SpeechDialog inherits Modal {
                 }
             }
 
-            // The named voices, while a sample is not standing in for them.
+            // The named voices, while a sample is not standing in for them,
+            // each with its avatar; and last, for a model that reads in a
+            // recording, the way to read in one's own - the sample switch
+            // below, found from where a voice is chosen.
             if !root.data.use-sample: DialogRow {
                 label: I18n.t("speech.voice");
                 Select {
                     options: root.voices;
                     details: root.voice-details;
-                    current: root.data.voice;
+                    avatars: root.voice-avatars;
+                    current: root.data.voice-count > 0 ? root.data.voice : -1;
                     placeholder: I18n.t("speech.none");
                     enabled: root.voices.length > 0;
                     changed(index) => { root.voice-changed(index); }
                 }
             }
 
+            // A style from the Audio page: effects the speech lands with,
+            // named here so the read is not a surprise, and taken off with
+            // the cross.
+            if root.data.style != "": DialogRow {
+                label: I18n.t("speech.style");
+                HorizontalLayout {
+                    spacing: 6px;
+                    alignment: start;
+                    Text {
+                        text: root.data.style;
+                        color: Theme.fg;
+                        font-size: Theme.fs;
+                        vertical-alignment: center;
+                    }
+                    Button {
+                        glyph: Glyph.close;
+                        square: true;
+                        ghost: true;
+                        clicked => { root.clear-style(); }
+                    }
+                }
+            }
+
             // Chatterbox ships no recording of anyone's, so its named voices
             // are Pocket's two, borrowed while Pocket is on disk. With
             // neither there is nothing to read with but a sample.
-            if root.data.family == 2 && root.voices.length == 0 && !root.data.use-sample: Text {
+            if root.data.family == 2 && root.data.voice-count == 0 && !root.data.use-sample: Text {
                 text: I18n.t("speech.chatterboxHasNoVoice");
                 color: Theme.danger;
                 font-size: Theme.fs-sm;
@@ -550,6 +611,29 @@ export component SpeechDialog inherits Modal {
                     horizontal-alignment: right;
                 }
             }
+
+            // Kept: the few seconds the model listens to, saved under a
+            // name - and a picture, if one is given - into the voice list
+            // of every project and the Audio page's Voices.
+            if root.samples.length > 0: DialogRow {
+                label: I18n.t("speech.saveThisVoice");
+                Field {
+                    value: root.data.save-name;
+                    placeholder: I18n.t("speech.voiceName");
+                    edited(text) => { root.save-name-edited(text); }
+                }
+                Button {
+                    label: root.data.save-picture != "" ? root.data.save-picture : I18n.t("speech.picture");
+                    glyph: Glyph.image;
+                    ghost: true;
+                    clicked => { root.pick-picture(); }
+                }
+                Button {
+                    label: I18n.t("speech.save");
+                    enabled: root.data.save-name != "" && !root.data.saving;
+                    clicked => { root.save-voice(); }
+                }
+            }
         }
 
         Rectangle {
@@ -589,37 +673,57 @@ export component SpeechDialog inherits Modal {
                 }
             }
 
-            if root.running: HorizontalLayout {
+            if root.running: VerticalLayout {
                 spacing: 8px;
 
-                Text {
-                    horizontal-stretch: 1;
-                    text: I18n.t("speech.generatingVoice");
-                    color: Theme.fg;
-                    font-size: Theme.fs;
-                    vertical-alignment: center;
+                row := HorizontalLayout {
+                    spacing: 8px;
+                    // The time left, once the work has been timed: counted down
+                    // from the last report, and gone in the last second.
+                    property <int> left: Math.ceil(Math.max(0, root.data.left - bar.since / 1s));
+
+                    Text {
+                        horizontal-stretch: 1;
+                        text: root.data.stage;
+                        color: Theme.fg;
+                        font-size: Theme.fs;
+                        vertical-alignment: center;
+                    }
+
+                    if root.data.left >= 0 && row.left > 0: Text {
+                        text: I18n.t2("common.aboutLeft", "\{Math.floor(row.left / 60)}",
+                            (Math.mod(row.left, 60) < 10 ? "0" : "") + "\{Math.mod(row.left, 60)}");
+                        color: Theme.fg-dim;
+                        font-size: Theme.fs;
+                        vertical-alignment: center;
+                    }
+
+                    Text {
+                        text: "\{Math.floor(bar.shown * 100)}%";
+                        color: Theme.fg-muted;
+                        font-family: Theme.font-technical;
+                        font-size: Theme.fs;
+                        vertical-alignment: center;
+                    }
+
+                    Text {
+                        text: "\{Math.floor(root.elapsed / 60)}:"
+                            + (Math.mod(root.elapsed, 60) < 10 ? "0" : "")
+                            + "\{Math.mod(root.elapsed, 60)}";
+                        color: Theme.fg-dim;
+                        font-family: Theme.font-technical;
+                        font-size: Theme.fs;
+                        vertical-alignment: center;
+                    }
                 }
 
-                Text {
-                    text: "\{Math.round(root.data.progress * 100)}%";
-                    color: Theme.fg-muted;
-                    font-family: Theme.font-technical;
-                    font-size: Theme.fs;
-                    vertical-alignment: center;
-                }
-
-                Text {
-                    text: "\{Math.floor(root.elapsed / 60)}:"
-                        + (Math.mod(root.elapsed, 60) < 10 ? "0" : "")
-                        + "\{Math.mod(root.elapsed, 60)}";
-                    color: Theme.fg-dim;
-                    font-family: Theme.font-technical;
-                    font-size: Theme.fs;
-                    vertical-alignment: center;
+                bar := Progress {
+                    value: root.data.progress;
+                    ceiling: root.data.ceiling;
+                    step: root.data.step * 1s;
+                    live: true;
                 }
             }
-
-            if root.running: Progress { value: root.data.progress; }
 
             if root.running: HorizontalLayout {
                 alignment: start;

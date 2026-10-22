@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// SPDX-FileCopyrightText: 2026 Jareer and Concat contributors
+// SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
 
 import { I18n } from "../i18n.slint";
 import { Theme, SegmentedControl } from "../primitives/primitives.slint";
@@ -8,7 +8,8 @@ import { Pane, PaneBody, PaneScroll } from "pane.slint";
 import { PaneKind, PaneSwitcher } from "pane-switcher.slint";
 import { EffectData } from "../demo/effects-panel.slint";
 import {
-    AdjustPanel, AppliedEntryData, AppliedParamData, AudioPanel, ProcessorRows,
+    AdjustPanel, AppliedEntryData, AppliedParamData, AudioPanel, BackgroundRows, ProcessorRows,
+    TransitionChoiceData,
     CatalogueEntryData, ColourKnobData, EnhancePanel, FilterPanel, PresetStack, SpeedPanel,
     TransitionPanel, VideoPanel,
 } from "../inspector/clip-inspector.slint";
@@ -113,6 +114,8 @@ export component ConfigPane inherits Rectangle {
     property <bool> has-selection: root.selected.present;
     /// The transition selected on its own on the lanes, when no clip is.
     in property <SelectedTransitionData> transition;
+    in property <[AppliedParamData]> transition-knobs;
+    in property <[TransitionChoiceData]> transition-choices;
     property <bool> on-transition: root.transition.present && !root.has-selection;
     in property <string> project-name: I18n.t("common.untitledProject");
     in property <string> project-folder: "—";
@@ -205,8 +208,13 @@ export component ConfigPane inherits Rectangle {
     callback cutout-clear();
     /// The Enhance switch: start it, or show the copy or the original.
     callback clip-enhance-set(on: bool);
+    callback clip-enhance-size(index: int);
+    callback clip-enhance-strength(strength: float);
+    callback clip-enhance-preview();
+    callback clip-enhance-run();
     callback transition-remove();
     callback transition-duration-set(seconds: float);
+    callback transition-param-set(key: string, value: float);
 
 
     // The tab strip follows the selection, and stays short: three tabs at
@@ -219,30 +227,35 @@ export component ConfigPane inherits Rectangle {
     // typography, stroke and box, all on the Text tab, and Video or Audio
     // on a title would be panels that can only say "nothing here".
     //
-    // Every kind the library can put an effect on shows the chain on an
-    // Effects tab - a title, a shape and a layer included - since an effect
-    // that went on with nowhere to see it could never come off again.
+    // Every kind the library can put an effect on shows the chain - on an
+    // Effects tab, a title and a shape included, or a layer's on its one
+    // tab - since an effect that went on with nowhere to see it could never
+    // come off again.
     property <bool> is-text: root.selected.kind == ClipKind.text;
     property <bool> is-image: root.selected.kind == ClipKind.image;
     /// A shape gets Vector Image, with the placement panel alone - it has no
     /// sound, no rate and no colour to adjust - and Effects.
     property <bool> is-shape: root.selected.kind == ClipKind.shape;
     property <bool> is-audio: root.selected.kind == ClipKind.audio;
-    /// A layer gets Layer - its strength and ramps - and Effects, its chain:
-    /// it has no transform, no gain and no rate, and every other tab could
-    /// only say "nothing here". A filter dragged from the Filters page and
+    /// A layer gets one tab: it has no transform, no gain and no rate, and
+    /// every other tab could only say "nothing here". What it does have -
+    /// its strength, the colour panel it grades everything beneath it with,
+    /// and its chain - are the tab's sections, so an adjustment layer is
+    /// graded the way a clip is. A filter dragged from the Filters page and
     /// an effect dragged from the Effects page both make one.
     property <bool> is-layer: root.selected.kind == ClipKind.filter;
-    property <[string]> tabs: root.is-text ? ["Text", "Effects"]
-        : root.is-layer ? ["Filter", "Effects"]
+    property <[string]> tabs: root.selected.batch-volume ? ["Audio"]
+        : root.is-text ? ["Text", "Effects"]
+        : root.is-layer ? ["Filter"]
         : root.is-shape ? ["Video", "Effects"]
         : root.is-image ? ["Video", "Effects"]
         : root.is-audio ? ["Audio"]
         : ["Video", "Audio", "Effects"];
     /// The same tabs in the interface's language. `tabs` stays English,
     /// because the panels are picked by comparing against it.
-    property <[string]> tabs-shown: root.is-text ? [I18n.t("common.text"), I18n.t("common.effects")]
-        : root.is-layer ? [I18n.t("common.layer"), I18n.t("common.effects")]
+    property <[string]> tabs-shown: root.selected.batch-volume ? [I18n.t("common.audio")]
+        : root.is-text ? [I18n.t("common.text"), I18n.t("common.effects")]
+        : root.is-layer ? [I18n.t("configPane.filter")]
         : root.is-shape ? [I18n.t("configPane.vectorImage"), I18n.t("common.effects")]
         : root.is-image ? [I18n.t("common.video"), I18n.t("common.effects")]
         : root.is-audio ? [I18n.t("common.audio")]
@@ -275,20 +288,26 @@ export component ConfigPane inherits Rectangle {
     /// The sections of the current tab, as the dropdown lists them.
     property <[string]> sections: root.heading == "Video"
             ? (root.is-shape ? ["Basic"] : ["Basic", "Enhance", "Adjust"])
+        // Audio's chain library is a page of its own, beside the level,
+        // fades and treatments rather than under them, the way Video's
+        // Adjust sits beside its Basic. Named apart from Video's "Basic"
+        // and the Effects tab's "Effects", since `showing` picks the panel
+        // by this name alone.
         : root.heading == "Audio"
-            ? ["Sound"]
+            ? (root.selected.batch-volume ? ["Sound"] : ["Sound", "AudioEffects"])
         : root.heading == "Effects" ? ["Effects"]
         : root.heading == "Text" ? ["Text"]
-        : ["Layer"];
+        : ["Layer", "Adjust", "Effects"];
     /// The sections as the dropdown shows them; see `tabs-shown`.
     property <[string]> sections-shown: root.heading == "Video"
             ? (root.is-shape ? [I18n.t("configPane.basic")]
                 : [I18n.t("configPane.basic"), I18n.t("common.enhance"), I18n.t("common.adjust")])
         : root.heading == "Audio"
-            ? [I18n.t("configPane.sound")]
+            ? (root.selected.batch-volume ? [I18n.t("configPane.basic")]
+                : [I18n.t("configPane.basic"), I18n.t("configPane.audioEffects")])
         : root.heading == "Effects" ? [I18n.t("common.effects")]
         : root.heading == "Text" ? [I18n.t("common.text")]
-        : [I18n.t("common.layer")];
+        : [I18n.t("common.layer"), I18n.t("common.adjust"), I18n.t("common.effects")];
 
     // Each tab remembers its own section, so flipping to Audio and back
     // lands on the colour panel you were adjusting. Assigned, never bound,
@@ -297,16 +316,19 @@ export component ConfigPane inherits Rectangle {
     property <int> section-audio;
     property <int> section-effects;
     property <int> section-text;
+    property <int> section-layer;
     property <int> section: root.heading == "Video" ? root.section-video
         : root.heading == "Audio" ? root.section-audio
         : root.heading == "Effects" ? root.section-effects
         : root.heading == "Text" ? root.section-text
+        : root.heading == "Filter" ? root.section-layer
         : 0;
     function pick-section(index: int) {
         if (root.heading == "Video") { root.section-video = index; }
         else if (root.heading == "Audio") { root.section-audio = index; }
         else if (root.heading == "Effects") { root.section-effects = index; }
         else if (root.heading == "Text") { root.section-text = index; }
+        else if (root.heading == "Filter") { root.section-layer = index; }
     }
 
     /// Which panel is up, resolved once rather than at each `if`: the same
@@ -319,11 +341,21 @@ export component ConfigPane inherits Rectangle {
     // was applied still opens on it.
     function jump() {
         if (root.jump-token == 0) { return; }
+        // A layer has the one tab: the library names the section - Adjust
+        // for a fresh adjustment layer, Effects for a look put on its chain.
+        if (root.is-layer) {
+            root.tab = 0;
+            root.section-layer = root.jump-section == "Adjust" ? 1
+                : root.jump-section == "Effects" ? 2 : 0;
+            return;
+        }
         if (root.jump-tab == "Video") { root.tab = 0; }
         else if (root.jump-tab == "Audio") { root.tab = root.is-audio ? 0 : 1; }
         else if (root.jump-tab == "Effects") { root.tab = root.tabs.length - 1; }
-        // Enhance sits second in the Video tab for a video and a still alike.
-        root.pick-section(root.jump-section == "Enhance" ? 1 : 0);
+        // Enhance sits second in the Video tab for a video and a still
+        // alike, and Audio effects second in the Audio tab.
+        root.pick-section(root.jump-section == "Enhance" || root.jump-section == "AudioEffects"
+            ? 1 : 0);
     }
     changed jump-token => { root.jump(); }
     init => { root.jump(); }
@@ -500,6 +532,9 @@ export component ConfigPane inherits Rectangle {
             PaneScroll {
                 TransitionPanel {
                     transition: root.transition;
+                    knobs: root.transition-knobs;
+                    choices: root.transition-choices;
+                    param-set(key, value) => { root.transition-param-set(key, value); }
                     remove => { root.transition-remove(); }
                     duration-set(seconds) => { root.transition-duration-set(seconds); }
                 }
@@ -651,6 +686,10 @@ export component ConfigPane inherits Rectangle {
                 if root.showing == "Enhance": EnhancePanel {
                     selected: root.selected;
                     enhance-set(on) => { root.clip-enhance-set(on); }
+                    enhance-size(index) => { root.clip-enhance-size(index); }
+                    enhance-strength(strength) => { root.clip-enhance-strength(strength); }
+                    enhance-preview => { root.clip-enhance-preview(); }
+                    enhance-run => { root.clip-enhance-run(); }
                 }
 
                 if root.showing == "Adjust": AdjustPanel {
@@ -692,7 +731,7 @@ export component ConfigPane inherits Rectangle {
                     // A sound clip's speed, under its level and fades: one
                     // knob is not a page of its own. A picture's sound
                     // rides the picture's, set under Video › Basic.
-                    if root.is-audio: SpeedPanel {
+                    if root.is-audio && !root.selected.batch-volume: SpeedPanel {
                         first: false;
                         selected: root.selected;
                         set(field, value) => { root.clip-set(field, value); }
@@ -702,7 +741,7 @@ export component ConfigPane inherits Rectangle {
                     // they are chain links like any other, but they are the
                     // ones a sound clip usually needs, so they get a switch
                     // rather than a search.
-                    ProcessorRows {
+                    if !root.selected.batch-volume: ProcessorRows {
                         applied: root.applied-audio;
                         params: root.audio-params;
                         add(id) => { root.chain-add(true, id); }
@@ -712,7 +751,13 @@ export component ConfigPane inherits Rectangle {
                         }
                         commit => { root.clip-commit(); }
                     }
-                    PresetStack {
+                }
+
+                // The sound's chain and its library, on their own page
+                // rather than under everything Basic holds, where a long
+                // chain pushed the library off the bottom of the pane.
+                if root.showing == "AudioEffects": VerticalLayout {
+                    if !root.selected.batch-volume: PresetStack {
                         noun: I18n.t("common.audioEffect");
                         library-title: I18n.t("configPane.audioEffects");
                         shelf: 2;

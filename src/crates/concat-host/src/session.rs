@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// SPDX-FileCopyrightText: 2026 Jareer and Concat contributors
+// SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
 
 //! The engine-owned editing session.
 //!
@@ -117,6 +117,11 @@ impl Session {
             }
             changed
         });
+        // 0.2.4's mask effects, retired with no stand-in on the chain,
+        // open as the clip's own mask (#239).
+        for old in editor.upgrade_mask_effects() {
+            upgraded.push((old, "mask".to_owned()));
+        }
         // Fields an earlier version wrote and this one does not read, off
         // the clips, with the clips named for the window to say so.
         let retired = editor.drop_retired_fields();

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// SPDX-FileCopyrightText: 2026 Jareer and Concat contributors
+// SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
 
 //! Turning a timeline plus a timestamp into one finished frame.
 //!
@@ -31,8 +31,8 @@ pub use compositor::Compositor;
 pub use gpu::WgpuCompositor;
 pub use metrics::ssim;
 pub use plan::{
-    Crop, FramePlan, Geometry, PlannedLayer, PlannedTreatment, Shading, Transition, detached_clip,
-    plan_frame,
+    Backdrop, Crop, FramePlan, Geometry, PlannedLayer, PlannedTreatment, Shading, Transition, Warp,
+    detached_clip, plan_frame,
 };
 #[cfg(test)]
 pub(crate) use reference::CpuCompositor;

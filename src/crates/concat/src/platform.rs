@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// SPDX-FileCopyrightText: 2026 Jareer and Concat contributors
+// SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
 
 //! What the window asks of the platform it runs on.
 //!
@@ -34,6 +34,80 @@ use slint::winit_030::winit::window::{Window as WinitWindow, WindowId};
 use slint::winit_030::{CustomApplicationHandler, EventResult};
 
 use crate::gpu::Gpu;
+
+/// The interface scale the person chose, as a percent of the display's
+/// own; 0 follows the display. See [`apply_ui_scale`].
+static UI_SCALE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Remembers the interface scale [`apply_ui_scale`] applies: a percent of
+/// the display's own scale, or `None` for the display's.
+pub fn set_ui_scale(percent: Option<u32>) {
+    UI_SCALE.store(percent.unwrap_or(0), std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Scales `window` to the display's own scale times the chosen percent.
+///
+/// Not through SLINT_SCALE_FACTOR, as it was: Slint takes that as the
+/// whole factor, not a multiplier, and ignores the display's scale while
+/// it is set, so "100 %" made the interface smaller on a Windows laptop at
+/// 150 % and halved it on a Retina Mac, and moving the window to another
+/// monitor no longer rescaled it. The display's scale is winit's, which no
+/// dispatch here changes; this runs when the window first shows, when the
+/// choice changes, and after every move to a monitor of another scale. A
+/// SLINT_SCALE_FACTOR set by hand still wins, and then nothing is done.
+/// https://github.com/jub0t/Concat/issues/320
+#[cfg(not(target_os = "android"))]
+pub fn apply_ui_scale(window: &slint::Window) {
+    use slint::winit_030::WinitWindowAccessor;
+    if std::env::var_os("SLINT_SCALE_FACTOR").is_some() {
+        return;
+    }
+    let Some(native) = window.with_winit_window(|winit| winit.scale_factor()) else {
+        // Not up yet, as at startup: try again shortly, a few times over,
+        // or the chosen scale waits for the next pick in Settings (#462).
+        static TRIES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        if TRIES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+            reapply_ui_scale(std::time::Duration::from_millis(50));
+        } else {
+            log::warn!("interface scale: no window to scale; giving up");
+        }
+        return;
+    };
+    let percent = UI_SCALE.load(std::sync::atomic::Ordering::Relaxed);
+    let chosen = if percent == 0 {
+        1.0
+    } else {
+        crate::prefs::Preferences::scale_factor(percent)
+    };
+    let factor = (native * chosen) as f32;
+    if (window.scale_factor() - factor).abs() < 1e-3 {
+        return;
+    }
+    log::info!("interface scale: the display's {native} times {chosen} is {factor}");
+    let physical = window.size();
+    window.dispatch_event(slint::platform::WindowEvent::ScaleFactorChanged {
+        scale_factor: factor,
+    });
+    window.dispatch_event(slint::platform::WindowEvent::Resized {
+        size: physical.to_logical(factor),
+    });
+}
+
+/// A phone sets its size the system's way; there is nothing to scale.
+#[cfg(target_os = "android")]
+pub fn apply_ui_scale(_window: &slint::Window) {}
+
+/// [`apply_ui_scale`] on the open window, once the event in hand is done:
+/// Slint applies a display's own scale as it handles the event, and the
+/// chosen percent goes on top of that afterwards.
+#[cfg(not(target_os = "android"))]
+fn reapply_ui_scale(delay: std::time::Duration) {
+    slint::Timer::single_shot(delay, || {
+        crate::host::Shell::with(|_, app| {
+            apply_ui_scale(slint::ComponentHandle::window(&app));
+        });
+    });
+}
 /// The window's raw events, seen before Slint routes them. Two jobs:
 ///
 /// Dropped files. winit reports one path per event, in a burst, and the
@@ -68,10 +142,19 @@ struct DropHandler {
     /// answer, so it is asked once.
     wayland: Option<crate::wayland_drop::Listener>,
     wayland_tried: bool,
+    /// Whether the window has been held to its screen yet: once, at its
+    /// first event.
+    fitted: bool,
     /// Where the pointer last was, in logical pixels of the window: winit
     /// says where it moved, and a press says only that it happened.
     cursor: Option<(f32, f32)>,
     on_pressed_away: Box<dyn Fn()>,
+    /// The window came back to the front: the moment a person returns from
+    /// moving a file, and the one where a file that went missing can be
+    /// noticed. See `Studio::check_missing_media`.
+    on_focused: Box<dyn Fn()>,
+    /// The event loop is ending, by any road: see `start` in lib.rs.
+    on_exiting: Box<dyn Fn()>,
     /// Whether this window draws its own resize edges: Linux, undecorated.
     edges: bool,
     /// The edge the pointer is on, while it is on one.
@@ -126,6 +209,8 @@ impl DropHandler {
     fn new(
         on_dropped: impl Fn(Vec<PathBuf>) + 'static,
         on_pressed_away: impl Fn() + 'static,
+        on_focused: impl Fn() + 'static,
+        on_exiting: impl Fn() + 'static,
     ) -> Self {
         Self {
             pending: Vec::new(),
@@ -133,8 +218,11 @@ impl DropHandler {
             arrived: Default::default(),
             wayland: None,
             wayland_tried: false,
+            fitted: false,
             cursor: None,
             on_pressed_away: Box::new(on_pressed_away),
+            on_focused: Box::new(on_focused),
+            on_exiting: Box::new(on_exiting),
             edges: cfg!(not(any(
                 target_os = "macos",
                 target_os = "windows",
@@ -182,6 +270,12 @@ impl CustomApplicationHandler for DropHandler {
         slint_window: Option<&slint::Window>,
         event: &WindowEvent,
     ) -> EventResult {
+        if !self.fitted
+            && let Some(window) = winit_window
+        {
+            self.fitted = true;
+            fit_to_screen(window);
+        }
         if !self.wayland_tried
             && let Some(window) = winit_window
         {
@@ -189,7 +283,12 @@ impl CustomApplicationHandler for DropHandler {
             self.wayland = listen_for_wayland_drops(window, &self.arrived);
         }
         match event {
+            WindowEvent::ScaleFactorChanged { .. } => reapply_ui_scale(std::time::Duration::ZERO),
             WindowEvent::DroppedFile(path) => self.pending.push(path.clone()),
+            // Back at the front, after Explorer or the file manager: what a
+            // dropped file is to an import, a return is to a look for one
+            // that went away while the window was open.
+            WindowEvent::Focused(true) => (self.on_focused)(),
             WindowEvent::CursorMoved { position, .. } => {
                 let scale = slint_window
                     .map(|window| f64::from(window.scale_factor()))
@@ -261,6 +360,7 @@ impl CustomApplicationHandler for DropHandler {
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) -> EventResult {
         // Before winit closes its display, which the listener reads.
         self.wayland = None;
+        (self.on_exiting)();
         EventResult::Propagate
     }
 }
@@ -322,11 +422,14 @@ pub fn phone() -> bool {
 /// a file manager - batched into one call per drag. It is taken here,
 /// before the window exists, because the backend - and the hook into its
 /// event loop that OS drops arrive through - has to be selected before
-/// anything is built on top of it; see [`DropHandler`].
+/// anything is built on top of it; see [`DropHandler`]. `on_focused` fires
+/// the same way each time the window is brought back to the front.
 #[cfg(not(target_os = "android"))]
 pub fn select_backend(
     on_files_dropped: impl Fn(Vec<PathBuf>) + 'static,
     on_pressed_away: impl Fn() + 'static,
+    on_focused: impl Fn() + 'static,
+    on_exiting: impl Fn() + 'static,
 ) -> Result<Option<Gpu>, PlatformError> {
     // The device the renderer and the monitor share. Taken first, because
     // the backend is selected with it.
@@ -354,7 +457,12 @@ pub fn select_backend(
 
     let mut selector = slint::BackendSelector::new()
         .backend_name("winit".into())
-        .with_winit_custom_application_handler(DropHandler::new(on_files_dropped, on_pressed_away));
+        .with_winit_custom_application_handler(DropHandler::new(
+            on_files_dropped,
+            on_pressed_away,
+            on_focused,
+            on_exiting,
+        ));
     selector = match &gpu {
         Some(gpu) => selector.require_wgpu_30(gpu.configuration()),
         None => {
@@ -502,6 +610,38 @@ pub fn minimize(window: &slint::Window) {
     let _ = window;
 }
 
+/// Maximises a window that opened larger than its screen. The window asks
+/// for 1400 by 900 and may not shrink past 900 by 560, both in logical
+/// pixels, and a 1920 by 1080 laptop at 150 % has 1280 by 720 of them less
+/// its taskbar: the window opened past the screen's edges, with its corner
+/// handles out of reach, and could not be moved back or made smaller
+/// (#347). Maximised it fills the work area, taskbar and all, and the
+/// title strip's double-click restores it.
+/// macOS shrinks a window to its screen by itself, so there it is left be.
+#[cfg(not(target_os = "android"))]
+fn fit_to_screen(window: &WinitWindow) {
+    if cfg!(target_os = "macos") {
+        return;
+    }
+    let Some(monitor) = window.current_monitor() else {
+        return;
+    };
+    let (screen, size) = (monitor.size(), window.outer_size());
+    // A taskbar or a dock takes up to about a tenth of the height; winit
+    // knows the monitor and not its work area.
+    let room = f64::from(screen.height) * 0.9;
+    if size.width > screen.width || f64::from(size.height) > room {
+        log::info!(
+            "window: {}x{} does not fit the screen's {}x{}; maximised",
+            size.width,
+            size.height,
+            screen.width,
+            screen.height
+        );
+        window.set_maximized(true);
+    }
+}
+
 /// Whether the window is currently maximised, for the strip to pick the
 /// maximise or the restore glyph. False where there is no such state.
 pub fn is_maximized(window: &slint::Window) -> bool {
@@ -531,6 +671,11 @@ pub fn select_backend(
     // Android has no pointer to press away with; the screen's own keyboard
     // dismisses, and the field goes with it.
     _on_pressed_away: impl Fn() + 'static,
+    // Nor a window that loses and regains the front: the activity owns the
+    // screen, and a file comes back through the picker.
+    _on_focused: impl Fn() + 'static,
+    // Nor a desktop event loop whose end this hook watches.
+    _on_exiting: impl Fn() + 'static,
 ) -> Result<Option<Gpu>, PlatformError> {
     let _ = on_files_dropped;
     Ok(None)
@@ -567,8 +712,8 @@ pub fn pick_folder(title: &str, start: &str) -> Option<PathBuf> {
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         let mut dialog = rfd::FileDialog::new().set_title(title);
-        if !start.is_empty() {
-            dialog = dialog.set_directory(start);
+        if let Some(folder) = existing_folder(start) {
+            dialog = dialog.set_directory(folder);
         }
         dialog.pick_folder()
     }
@@ -579,12 +724,102 @@ pub fn pick_folder(title: &str, start: &str) -> Option<PathBuf> {
     }
 }
 
-/// What a phone does when asked for files: shows the system's picker and
-/// calls back, later, with what was chosen - an empty list for nothing.
-/// Installed by the phone's own crate before the window runs; see
-/// [`install_file_picker`].
+/// Where a folder dialog asked to start at `start` can open: `start`
+/// itself, or the nearest folder above it that exists. A new project's
+/// default, `<Desktop>/Concat`, is not made until the first project is, and
+/// GNOME's chooser (Nautilus, behind the portal) fails on a folder that is
+/// not there, where GTK's quietly opens elsewhere.
+/// https://github.com/jub0t/Concat/issues/331
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn existing_folder(start: &str) -> Option<&std::path::Path> {
+    std::path::Path::new(start)
+        .ancestors()
+        .find(|folder| folder.is_dir())
+}
+
+/// What a phone does when asked for files: shows the system's picker for
+/// the kinds asked for (see [`PickKinds`]) and calls back, later, with what
+/// was chosen - an empty list for nothing. Installed by the phone's own
+/// crate before the window runs; see [`install_file_picker`].
 #[cfg(any(target_os = "android", target_os = "ios"))]
-pub type FilePicker = Box<dyn Fn(Box<dyn FnOnce(Vec<PathBuf>) + Send>) + Send + Sync>;
+pub type FilePicker = Box<dyn Fn(PickKinds, Box<dyn FnOnce(Vec<PathBuf>) + Send>) + Send + Sync>;
+
+/// What a phone's picker is asked to offer, from the desktop dialog's
+/// list of extensions: media - some of video, sound and pictures - which
+/// the phone's own pickers know by kind, or files by their extensions
+/// (subtitles, fonts), which a phone's providers type so variously that
+/// the extensions are all there is to go on.
+#[cfg(any(target_os = "android", target_os = "ios", test))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PickKinds {
+    /// Media, by kind; every kind when no list was given.
+    Media {
+        video: bool,
+        audio: bool,
+        image: bool,
+    },
+    /// Anything else, by extension, lowercase and without the dot.
+    Files(Vec<String>),
+}
+
+#[cfg(any(target_os = "android", target_os = "ios", test))]
+impl PickKinds {
+    /// The kinds a dialog filter's extensions ask for. No filter is every
+    /// kind of media, as Import asks.
+    pub fn of(extensions: Option<&[&str]>) -> Self {
+        let Some(extensions) = extensions.filter(|list| !list.is_empty()) else {
+            return PickKinds::Media {
+                video: true,
+                audio: true,
+                image: true,
+            };
+        };
+        let (mut video, mut audio, mut image) = (false, false, false);
+        for extension in extensions {
+            match media_kind(extension) {
+                Some(MediaKind::Video) => video = true,
+                Some(MediaKind::Audio) => audio = true,
+                Some(MediaKind::Image) => image = true,
+                None => {
+                    return PickKinds::Files(
+                        extensions
+                            .iter()
+                            .map(|ext| ext.to_ascii_lowercase())
+                            .collect(),
+                    );
+                }
+            }
+        }
+        PickKinds::Media {
+            video,
+            audio,
+            image,
+        }
+    }
+}
+
+#[cfg(any(target_os = "android", target_os = "ios", test))]
+enum MediaKind {
+    Video,
+    Audio,
+    Image,
+}
+
+#[cfg(any(target_os = "android", target_os = "ios", test))]
+/// Which kind of media a file with this extension is, if it is media.
+fn media_kind(extension: &str) -> Option<MediaKind> {
+    match extension.to_ascii_lowercase().as_str() {
+        "mp4" | "mov" | "mkv" | "webm" | "avi" | "m4v" | "mts" | "m2ts" | "3gp" => {
+            Some(MediaKind::Video)
+        }
+        "mp3" | "wav" | "aac" | "m4a" | "flac" | "ogg" | "opus" | "aif" | "aiff" => {
+            Some(MediaKind::Audio)
+        }
+        "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" | "tif" | "tiff" | "heic" | "heif"
+        | "svg" | "svgz" => Some(MediaKind::Image),
+        _ => None,
+    }
+}
 
 #[cfg(any(target_os = "android", target_os = "ios"))]
 static FILE_PICKER: std::sync::OnceLock<FilePicker> = std::sync::OnceLock::new();
@@ -610,6 +845,13 @@ pub struct ExportPublisher {
     /// storage, or with why it could not, leaving the file where it was.
     /// It copies a whole video, so it is called off the window's thread.
     pub publish: Box<dyn Fn(&std::path::Path) -> Result<String, String> + Send + Sync>,
+    /// The same for a small file that is not a video - a subtitle file -
+    /// with its MIME type: moved to where the phone's file manager shows
+    /// it (Android's Download/Concat, the iPhone's Files), never over
+    /// another file, and answered with where, as the person would look
+    /// for it.
+    pub publish_document:
+        Box<dyn Fn(&std::path::Path, &str) -> Result<String, String> + Send + Sync>,
 }
 
 #[cfg(any(target_os = "android", target_os = "ios"))]
@@ -620,6 +862,75 @@ static EXPORT_PUBLISHER: std::sync::OnceLock<ExportPublisher> = std::sync::OnceL
 #[cfg(any(target_os = "android", target_os = "ios"))]
 pub fn install_export_publisher(publisher: ExportPublisher) {
     let _ = EXPORT_PUBLISHER.set(publisher);
+}
+
+/// Whether the app may record from the microphone, asking when it has not
+/// been told: on a phone, false puts the system's question up and comes
+/// back at once, and the answer is read the next time this is asked.
+/// Installed by the phone's own crate; see [`install_microphone_access`].
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub type MicrophoneAccess = Box<dyn Fn() -> bool + Send + Sync>;
+
+#[cfg(any(target_os = "android", target_os = "ios"))]
+static MICROPHONE_ACCESS: std::sync::OnceLock<MicrophoneAccess> = std::sync::OnceLock::new();
+
+/// Installs how a phone is asked for its microphone. Once; a second call
+/// is ignored.
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub fn install_microphone_access(access: MicrophoneAccess) {
+    let _ = MICROPHONE_ACCESS.set(access);
+}
+
+/// Opens a web address in the browser, on a phone. Installed by the phone's
+/// own crate; see [`install_link_opener`].
+#[cfg(target_os = "android")]
+pub type LinkOpener = Box<dyn Fn(&str) -> Result<(), String> + Send + Sync>;
+
+#[cfg(target_os = "android")]
+static LINK_OPENER: std::sync::OnceLock<LinkOpener> = std::sync::OnceLock::new();
+
+/// Installs how a phone opens a web address. Once; a second call is
+/// ignored.
+#[cfg(target_os = "android")]
+pub fn install_link_opener(opener: LinkOpener) {
+    let _ = LINK_OPENER.set(opener);
+}
+
+/// Opens a web address in the system's browser: the launch screen's
+/// guides, the repository, the release notes. A desktop hands it to the
+/// platform's opener; Android to an ACTION_VIEW intent through the
+/// activity, iOS to UIApplication. An address that goes nowhere says why.
+pub fn open_link(url: &str) -> Result<(), String> {
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        opener::open(url).map_err(|error| error.to_string())
+    }
+    #[cfg(target_os = "android")]
+    {
+        match LINK_OPENER.get() {
+            Some(open) => open(url),
+            None => Err(format!("this device has no browser to open {url} with")),
+        }
+    }
+    #[cfg(target_os = "ios")]
+    {
+        crate::ios::open_link(url)
+    }
+}
+
+/// Whether the microphone may be opened now. A desktop asks when the
+/// device opens, which is the system's business, so it is always yes here;
+/// a phone with nothing installed is too, and the device's own error says
+/// the rest.
+pub fn microphone_allowed() -> bool {
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        MICROPHONE_ACCESS.get().is_none_or(|access| access())
+    }
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        true
+    }
 }
 
 /// Where a finished export ends up on this device when that is not the
@@ -664,6 +975,33 @@ pub fn publish_export(
     }
 }
 
+/// [`publish_export`] for a document - a subtitle file - of MIME type
+/// `mime`: handed to the phone on a thread of its own, `on_done` told
+/// where it went or why not. False when there is nothing to hand it to -
+/// a desktop, where the file was written where the person chose, or a
+/// phone too old to be asked - and `on_done` is never called.
+pub fn publish_document(
+    path: std::path::PathBuf,
+    mime: &'static str,
+    on_done: impl FnOnce(Result<String, String>) + Send + 'static,
+) -> bool {
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    {
+        let Some(publisher) = EXPORT_PUBLISHER.get() else {
+            return false;
+        };
+        std::thread::Builder::new()
+            .name("document publish".into())
+            .spawn(move || on_done((publisher.publish_document)(&path, mime)))
+            .is_ok()
+    }
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        let _ = (path, mime, on_done);
+        false
+    }
+}
+
 /// Asks for files and calls `on_picked` with them, on whichever thread the
 /// platform answers from - the caller hops to the window's thread itself.
 ///
@@ -671,7 +1009,8 @@ pub fn publish_export(
 /// returns. On a phone the system's picker is another screen: this returns
 /// at once and the callback comes when the picker is dismissed, through
 /// the picker the phone's crate installed. `filter` is the desktop
-/// dialog's; a phone's picker offers every kind of media on its own.
+/// dialog's; a phone's picker is asked for the same kinds of file, as
+/// [`PickKinds`] reads them from it.
 pub fn pick_files_async(
     title: &str,
     filter: Option<(&str, &[&str])>,
@@ -685,9 +1024,10 @@ pub fn pick_files_async(
     }
     #[cfg(any(target_os = "android", target_os = "ios"))]
     {
-        let _ = (title, filter);
+        let _ = title;
+        let kinds = PickKinds::of(filter.map(|(_, extensions)| extensions));
         match FILE_PICKER.get() {
-            Some(picker) => picker(Box::new(on_picked)),
+            Some(picker) => picker(kinds, Box::new(on_picked)),
             None => log::warn!("no file picker on this platform yet"),
         }
     }
@@ -789,5 +1129,56 @@ mod tests {
         assert_eq!(at(1.0, 1.0), Some(ResizeDirection::NorthWest));
         assert_eq!(at(999.0, 799.0), Some(ResizeDirection::SouthEast));
         assert_eq!(at(6.0, 400.0), None);
+    }
+
+    /// A folder dialog opens on a folder that exists: a default location
+    /// not made yet opens on the folder it would be made in, one that
+    /// exists opens as given, and no location asks for none.
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    #[test]
+    fn a_folder_dialog_starts_at_a_folder_that_exists() {
+        let root = std::env::temp_dir().join(format!("concat-pick-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let missing = root.join("Concat");
+        assert_eq!(
+            existing_folder(&missing.to_string_lossy()),
+            Some(root.as_path())
+        );
+        assert_eq!(
+            existing_folder(&root.to_string_lossy()),
+            Some(root.as_path())
+        );
+        assert_eq!(existing_folder(""), None);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// A phone's picker is asked for what the desktop dialog would show:
+    /// media by kind, and subtitles or fonts by their extensions - an
+    /// .srt is not media, and a picker that offered only media hid it.
+    #[test]
+    fn a_phone_picker_is_asked_for_the_dialogs_kinds() {
+        let every = PickKinds::Media {
+            video: true,
+            audio: true,
+            image: true,
+        };
+        assert_eq!(PickKinds::of(None), every);
+        assert_eq!(PickKinds::of(Some(&["mp4", "WAV", "png"])), every);
+        assert_eq!(
+            PickKinds::of(Some(&["mp3", "flac"])),
+            PickKinds::Media {
+                video: false,
+                audio: true,
+                image: false,
+            }
+        );
+        assert_eq!(
+            PickKinds::of(Some(&["SRT"])),
+            PickKinds::Files(vec!["srt".to_owned()])
+        );
+        assert_eq!(
+            PickKinds::of(Some(&["ttf", "otf"])),
+            PickKinds::Files(vec!["ttf".to_owned(), "otf".to_owned()])
+        );
     }
 }

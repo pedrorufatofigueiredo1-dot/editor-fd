@@ -1,17 +1,21 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// SPDX-FileCopyrightText: 2026 Jareer and Concat contributors
+// SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
 
 //! The VU meters' feed: playback's peaks, thirty times a second, onto the
 //! Meters global, with the ballistics a meter needs - up at once, down at
 //! a steady rate, the loudest of the last moment held as a line, and the
 //! clip light latched until it is clicked.
 //!
-//! The timer runs only while something plays, and for the moment after it
-//! takes the bars to fall; it stops itself once they are down.
+//! The timer runs only while something plays and the meters are on
+//! screen, and for the moment after it takes the bars to fall; it stops
+//! itself once they are down. Put away - the tray's meter button, a dock
+//! with no timeline in it, the phone shell, which has none - they cost
+//! nothing: no timer, and no property changing thirty times a second.
 
 use slint::ComponentHandle;
 
-use crate::ui::Meters;
+use crate::studio::Studio;
+use crate::ui::{Meters, PaneKind};
 
 /// The meters' floor in dB: their 0. Their 1 is 0 dB.
 const FLOOR_DB: f32 = -60.0;
@@ -66,33 +70,63 @@ pub struct MeterFeed {
     left: Side,
     right: Side,
     pub clipped: bool,
+    /// The window is a phone's, whose shell has no meters to feed.
+    pub phone: bool,
     timer: slint::Timer,
 }
 
-impl MeterFeed {
-    /// Something started playing: the meters follow it.
-    pub fn wake(&self) {
-        if self.timer.running() {
-            return;
-        }
-        self.timer.start(slint::TimerMode::Repeated, TICK, || {
-            crate::host::Shell::with(|shell, app| {
-                let mut studio = shell.studio.borrow_mut();
-                let rolling =
-                    studio.playing || studio.source.as_ref().is_some_and(|source| source.playing);
-                let (left, right) = studio.host.playback.take_levels();
-                let feed = &mut studio.meters;
-                feed.left.tick(left, TICK.as_secs_f32());
-                feed.right.tick(right, TICK.as_secs_f32());
-                feed.clipped |= left >= 1.0 || right >= 1.0;
-                feed.publish(&app);
-                if !rolling && feed.left.quiet() && feed.right.quiet() {
-                    feed.timer.stop();
-                }
-            });
-        });
+impl Studio {
+    /// Whether anything can see the meters: the tray's switch is on, and
+    /// a timeline - whose right edge they sit on - is in the dock.
+    pub fn meters_shown(&self) -> bool {
+        !self.meters.phone && self.prefs.meters_shown() && self.dock.contains(PaneKind::Timeline)
     }
 
+    fn rolling(&self) -> bool {
+        self.playing || self.source.as_ref().is_some_and(|source| source.playing)
+    }
+
+    /// Something started playing, or the meters came into view while it
+    /// plays: they follow it. Nothing happens when nobody can see them.
+    pub fn wake_meters(&self) {
+        if self.meters.timer.running() || !self.rolling() || !self.meters_shown() {
+            return;
+        }
+        // The peaks playback kept while nobody was reading them belong to
+        // some earlier moment; the first tick is to show this one.
+        let _ = self.host.playback.take_levels();
+        self.meters
+            .timer
+            .start(slint::TimerMode::Repeated, TICK, || {
+                crate::host::Shell::with(|shell, app| {
+                    let mut studio = shell.studio.borrow_mut();
+                    let rolling = studio.rolling();
+                    let shown = studio.meters_shown();
+                    let (left, right) = studio.host.playback.take_levels();
+                    let feed = &mut studio.meters;
+                    if !shown {
+                        // Put away mid-play: the bars drop to the floor now,
+                        // so they are not found standing where they were when
+                        // the meters are shown again, and the timer stops.
+                        feed.left = Side::default();
+                        feed.right = Side::default();
+                        feed.publish(&app);
+                        feed.timer.stop();
+                        return;
+                    }
+                    feed.left.tick(left, TICK.as_secs_f32());
+                    feed.right.tick(right, TICK.as_secs_f32());
+                    feed.clipped |= left >= 1.0 || right >= 1.0;
+                    feed.publish(&app);
+                    if !rolling && feed.left.quiet() && feed.right.quiet() {
+                        feed.timer.stop();
+                    }
+                });
+            });
+    }
+}
+
+impl MeterFeed {
     /// The clip light was clicked.
     pub fn clear_clip(&mut self, app: &crate::ui::App) {
         self.clipped = false;

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// SPDX-FileCopyrightText: 2026 Jareer and Concat contributors
+// SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
 
 //! Effect cards: every picture package's still, drawn by the package.
 //!
@@ -394,6 +394,12 @@ fn turned(still: &Frame) -> Frame {
 /// adapter is to be had - handing their ids to `report` a few at a time as
 /// they land, so a shelf fills as it goes, and a last time with `done`. A
 /// card that fails is logged and skipped: its package shows no picture.
+///
+/// On a software adapter - WARP, lavapipe, the Android emulator's
+/// SwiftShader, a safe start's CONCAT_GPU=software - none are drawn unless
+/// CONCAT_REQUIRE_GPU is set: there the hundred cards are every pixel
+/// through the CPU, an hour and more on WARP, and on CI's API 30 emulator
+/// they froze the whole device. The shelves show their names alone.
 pub fn draw_all(
     dir: &Path,
     cards: &[Card],
@@ -404,7 +410,13 @@ pub fn draw_all(
     let painter = compositor
         .or_else(WgpuCompositor::new)
         .ok_or_else(|| "no GPU or software renderer is available to draw with".to_owned())
-        .and_then(|compositor| Painter::new(compositor, &still_in(dir)?, WIDTH, HEIGHT));
+        .and_then(|compositor| {
+            if compositor.on_software_adapter() && std::env::var_os("CONCAT_REQUIRE_GPU").is_none()
+            {
+                return Err("a software adapter only; the cards are left undrawn".to_owned());
+            }
+            Painter::new(compositor, &still_in(dir)?, WIDTH, HEIGHT)
+        });
     let mut painter = match painter {
         Ok(painter) => painter,
         Err(error) => {

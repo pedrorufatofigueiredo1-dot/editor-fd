@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// SPDX-FileCopyrightText: 2026 Jareer and Concat contributors
+// SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
 
 // The timeline's shared vocabulary: what a tab, a lane and a clip are.
 //
@@ -218,9 +218,19 @@ export enum ClipField {
     /// frame height on each axis
     background-padding-x, background-padding-y,
     cutout-feather,
+    /// stabilization: on (1) or off (0), how smooth, the most it may zoom,
+    /// and tripod (1) or following the camera's move (0)
+    stabilize, stabilize-smoothness, stabilize-max-zoom, stabilize-tripod,
     /// which of the media's audio tracks the clip plays, as a row of
     /// Editor.audio-tracks
     audio-track,
+    /// the mask: its shape as a place in the picker, below zero for none;
+    /// whether it keeps the outside; and its numbers, each keyable - the
+    /// centre as fractions of the picture from its middle, the box in the
+    /// picture's shorter side, the turn in degrees, the corners' roundness
+    /// and the edge's softness 0..1
+    mask-shape, mask-invert,
+    mask-x, mask-y, mask-width, mask-height, mask-rotation, mask-roundness, mask-feather,
 }
 
 /// One keyable property's state at the playhead, as the inspector needs it.
@@ -275,11 +285,11 @@ export global Keyframes {
         return { field: field, keyed: false, here: false, prev: false, next: false };
     }
 
-    /// This field's row. Slint has no lookup and the list is six long, so
-    /// the order Rust publishes them in *is* the index; `blank` covers the
-    /// moment before the first publish.
+    /// This field's row. Slint has no lookup and the list is thirteen
+    /// long, so the order Rust publishes them in *is* the index; `blank`
+    /// covers the moment before the first publish.
     pure public function row(field: ClipField) -> ClipKeyData {
-        if (Keyframes.rows.length < 6) {
+        if (Keyframes.rows.length < 13) {
             return Keyframes.blank(field);
         }
         return field == ClipField.scale ? Keyframes.rows[0]
@@ -288,8 +298,62 @@ export global Keyframes {
             : field == ClipField.rotation ? Keyframes.rows[3]
             : field == ClipField.opacity ? Keyframes.rows[4]
             : field == ClipField.volume ? Keyframes.rows[5]
+            : field == ClipField.mask-x ? Keyframes.rows[6]
+            : field == ClipField.mask-y ? Keyframes.rows[7]
+            : field == ClipField.mask-width ? Keyframes.rows[8]
+            : field == ClipField.mask-height ? Keyframes.rows[9]
+            : field == ClipField.mask-rotation ? Keyframes.rows[10]
+            : field == ClipField.mask-roundness ? Keyframes.rows[11]
+            : field == ClipField.mask-feather ? Keyframes.rows[12]
             : Keyframes.blank(field);
     }
+}
+
+/// One background, as a panel shows it: the timeline's, or the selected
+/// clip's own over it.
+export struct BackdropData {
+    /// 0 black, 1 blur, 2 colour, 3 a still; a clip's is -1 while it
+    /// follows the timeline's
+    mode: int,
+    /// how soft a blur is, 0..1
+    amount: float,
+    /// a colour background's colour, and the same as text
+    colour: color,
+    /// the still's row in Backdrop.stills, -1 when it is not one of them
+    still: int,
+}
+
+/// What fills the frame behind the main picture, and Fit and Fill.
+///
+/// A global, as Keyframes is, because three places ask the same questions
+/// of it - the Details panel for the timeline's, the Video panel for a
+/// clip's, and the phone - and none of them should be threaded to.
+export global Backdrop {
+    /// The active timeline's background.
+    in property <BackdropData> timeline;
+    /// The selected clip's own, when it has one to have.
+    in property <BackdropData> clip;
+    /// The selected clip is a video or a still on the lowest lane that
+    /// holds a picture: the clips a background is drawn behind.
+    in property <bool> clip-has;
+    /// Fit and Fill can size the selection: one picture whose size is known.
+    in property <bool> can-frame;
+    /// The bin's stills, by name, for a still background.
+    in property <[string]> stills;
+
+    /// Picks the kind, the timeline's or the selected clip's: `mode` as in
+    /// BackdropData, a clip's -1 going back to the timeline's.
+    callback set-mode(clip: bool, mode: int);
+    /// A blur's softness, as a knob turns it.
+    callback set-amount(clip: bool, amount: float);
+    callback set-colour(clip: bool, colour: color);
+    /// A still, by its row in `stills`.
+    callback set-still(clip: bool, row: int);
+    /// The selected clip's background for every picture on the main lane.
+    callback apply-to-all();
+    /// Sizes the selected picture to the frame: whole inside it, or
+    /// covering it.
+    callback frame(fill: bool);
 }
 
 /// The same again for the properties that are text rather than numbers.
@@ -320,6 +384,8 @@ export struct SelectedClipData {
     /// how many clips the panel writes to: one, or every selected title
     /// when several are selected together, shown by the first's values
     batch: int,
+    /// Only the volume control is available for this selection.
+    batch-volume: bool,
     id: string,
     /// the output frame's size, so a fraction can be shown in pixels
     frame-width: int,
@@ -363,6 +429,18 @@ export struct SelectedClipData {
     crop-top: float,
     crop-right: float,
     crop-bottom: float,
+    /// the mask: its shape as a place in the picker (linear, mirror,
+    /// circle, rectangle, heart, star), -1 for none; whether it is
+    /// inverted; and its numbers at the playhead - see ClipField.mask-x
+    mask: int,
+    mask-invert: bool,
+    mask-x: float,
+    mask-y: float,
+    mask-width: float,
+    mask-height: float,
+    mask-rotation: float,
+    mask-roundness: float,
+    mask-feather: float,
     fade-in: float,
     fade-out: float,
 
@@ -380,6 +458,19 @@ export struct SelectedClipData {
     cutout-fetching: bool,
     cutout-empty: bool,
 
+    // stabilization: on or off; how smooth, 0..1; the most it may zoom;
+    // tripod rather than following the move; the measurement of the
+    // media's shake, -1 when none is running, else how far along; and,
+    // once measured, the zoom it is drawn at and the zoom every frame
+    // would need, -1 before
+    stabilize: bool,
+    stabilize-smoothness: float,
+    stabilize-max-zoom: float,
+    stabilize-tripod: bool,
+    stabilize-progress: float,
+    stabilize-zoom: float,
+    stabilize-needed: float,
+
     // Enhance writing this clip's enhanced copy: -1 when it is not, else
     // how far along, and whether that is the model downloading rather
     // than frames being restored
@@ -388,8 +479,34 @@ export struct SelectedClipData {
     /// Enhance has made a copy for this clip, which it shows when
     /// `enhance-on`; the switch flips between it and the original
     enhance-linked: bool,
-    /// The Enhance switch: the copy shown, or a run under way
+    /// The Enhance tick: the section on - and, with a copy, the copy shown
     enhance-on: bool,
+    /// Enhance at work on some clip, a run or a preview: the model is one
+    /// model, so the section's buttons wait for it
+    enhance-busy: bool,
+    /// The Size row: 0 Auto, 1 once, 2 twice, 3 four times - what will
+    /// happen, so an ask this file cannot take shows as what it falls to.
+    /// `enhance-auto` is what Auto comes to here; a size that would pass
+    /// the longest-side limit is greyed, `enhance-size-note` saying why
+    enhance-size: int,
+    enhance-auto: int,
+    enhance-fits-2x: bool,
+    enhance-fits-4x: bool,
+    enhance-size-note: string,
+    /// The Strength row, 0 to 1: how much of the model's answer is kept
+    enhance-strength: float,
+    /// A preview of the frame under the playhead being made for this clip,
+    /// and how far the model's download is when that is what it waits on
+    /// (-1 when it is not)
+    enhance-previewing: bool,
+    enhance-preview-fetch: float,
+    /// The preview made for this clip at these settings: the middle of
+    /// the frame enlarged plainly and enhanced, and what a whole run would
+    /// take at the speed it measured
+    enhance-preview: bool,
+    enhance-before: image,
+    enhance-after: image,
+    enhance-estimate: string,
     /// Reverse writing this clip's backwards copy: -1 when it is not,
     /// else how far along
     reverse-progress: float,
@@ -464,6 +581,25 @@ export struct StageItemData {
     rotation: float,
     /// The clip's scale, for the readout under the box.
     scale: float,
+    /// The selected clip's mask, when it has one and is the only one
+    /// selected: its shape as a place in the picker (-1 for none), its
+    /// outline as path commands on a thousand-unit box over the frame, and
+    /// its grips' centres in fractions of the frame - the middle, the
+    /// width's, the height's, the corner's, the turn's and the feather's.
+    mask: int,
+    mask-path: string,
+    mask-cx: float,
+    mask-cy: float,
+    mask-wx: float,
+    mask-wy: float,
+    mask-hx: float,
+    mask-hy: float,
+    mask-kx: float,
+    mask-ky: float,
+    mask-rx: float,
+    mask-ry: float,
+    mask-fx: float,
+    mask-fy: float,
 }
 
 /// One snap guide across the stage while a picture is dragged: the line the

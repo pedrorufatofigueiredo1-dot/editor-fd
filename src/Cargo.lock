@@ -393,7 +393,7 @@ version = "0.38.0+1.3.281"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0bb44936d800fea8f016d7f2311c6a4f97aebd5dc86f09906139ec848cf3a46f"
 dependencies = [
- "libloading",
+ "libloading 0.8.9",
 ]
 
 [[package]]
@@ -1010,7 +1010,7 @@ checksum = "157a8ba7b480713b56f4c09fd13fc3e0a22a5dfab8097ba61cbc5feef950788a"
 dependencies = [
  "glob",
  "libc",
- "libloading",
+ "libloading 0.8.9",
 ]
 
 [[package]]
@@ -1130,13 +1130,15 @@ dependencies = [
 
 [[package]]
 name = "concat"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
+ "block2 0.6.2",
  "concat-api",
  "concat-core",
  "concat-effects",
  "concat-export",
  "concat-host",
+ "concat-mcp",
  "concat-media",
  "concat-project",
  "concat-server",
@@ -1147,6 +1149,8 @@ dependencies = [
  "image",
  "libc",
  "log",
+ "objc2 0.6.4",
+ "objc2-foundation 0.3.2",
  "opener",
  "pollster",
  "rfd",
@@ -1163,7 +1167,7 @@ dependencies = [
 
 [[package]]
 name = "concat-android"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "android-build",
  "android_logger",
@@ -1176,7 +1180,7 @@ dependencies = [
 
 [[package]]
 name = "concat-api"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "base64 0.22.1",
  "concat-core",
@@ -1185,6 +1189,7 @@ dependencies = [
  "concat-host",
  "concat-project",
  "png 0.17.16",
+ "schemars",
  "serde",
  "serde_json",
  "tempfile",
@@ -1192,7 +1197,7 @@ dependencies = [
 
 [[package]]
 name = "concat-cli"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "clap",
  "concat-api",
@@ -1207,11 +1212,11 @@ dependencies = [
 
 [[package]]
 name = "concat-core"
-version = "0.2.7"
+version = "0.2.8"
 
 [[package]]
 name = "concat-effects"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "concat-core",
  "concat-project",
@@ -1223,7 +1228,7 @@ dependencies = [
 
 [[package]]
 name = "concat-export"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "concat-core",
  "concat-effects",
@@ -1237,7 +1242,7 @@ dependencies = [
 
 [[package]]
 name = "concat-host"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "concat-core",
  "concat-effects",
@@ -1255,26 +1260,39 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "tempfile",
  "ureq 2.12.1",
  "windows-sys 0.61.2",
 ]
 
 [[package]]
+name = "concat-mcp"
+version = "0.2.8"
+dependencies = [
+ "concat-api",
+ "concat-server",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "concat-media"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "concat-core",
  "ffmpeg-the-third",
  "libc",
  "log",
+ "resvg",
  "thiserror 2.0.20",
 ]
 
 [[package]]
 name = "concat-project"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "concat-core",
+ "schemars",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
@@ -1282,7 +1300,7 @@ dependencies = [
 
 [[package]]
 name = "concat-render"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "concat-core",
  "concat-effects",
@@ -1294,12 +1312,13 @@ dependencies = [
 
 [[package]]
 name = "concat-server"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "concat-api",
  "getrandom 0.3.4",
  "prost",
  "protox",
+ "serde",
  "serde_json",
  "tempfile",
  "tokio",
@@ -1311,11 +1330,12 @@ dependencies = [
 
 [[package]]
 name = "concat-speech"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "bzip2 0.6.1",
  "concat-host",
  "concat-media",
+ "concat-vision",
  "log",
  "ort",
  "serde",
@@ -1329,7 +1349,7 @@ dependencies = [
 
 [[package]]
 name = "concat-text"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "fontdb 0.23.0",
  "memmap2",
@@ -1343,7 +1363,7 @@ dependencies = [
 
 [[package]]
 name = "concat-vision"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "concat-core",
  "concat-project",
@@ -1821,7 +1841,7 @@ version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ab8ecd87370524b461f8557c119c405552c396ed91fc0a8eec68679eab26f94a"
 dependencies = [
- "libloading",
+ "libloading 0.8.9",
 ]
 
 [[package]]
@@ -1905,6 +1925,12 @@ name = "dtor"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "edf234dd1594d6dd434a8fb8cada51ddbbc593e40e4a01556a0b31c62da2775b"
+
+[[package]]
+name = "dyn-clone"
+version = "1.0.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 
 [[package]]
 name = "either"
@@ -2194,7 +2220,9 @@ version = "0.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2660c5e9157bf76d2db1294e4a9feba604ef610819a3b591088d0d8392a3290f"
 dependencies = [
+ "fontconfig-parser",
  "log",
+ "memmap2",
  "slotmap",
  "tinyvec",
 ]
@@ -2521,7 +2549,7 @@ dependencies = [
  "glutin_egl_sys",
  "glutin_glx_sys",
  "glutin_wgl_sys",
- "libloading",
+ "libloading 0.8.9",
  "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
  "objc2-core-foundation",
@@ -3592,7 +3620,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6aae1df220ece3c0ada96b8153459b67eebe9ae9212258bb0134ae60416fdf76"
 dependencies = [
  "libc",
- "libloading",
+ "libloading 0.8.9",
  "pkg-config",
 ]
 
@@ -3655,6 +3683,16 @@ name = "libloading"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d7c4b02199fee7c5d21a5ae7d8cfa79a6ef5bb2fc834d6e9058e89c825efdc55"
+dependencies = [
+ "cfg-if",
+ "windows-link",
+]
+
+[[package]]
+name = "libloading"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "754ca22de805bb5744484a5b151a9e1a8e837d5dc232c2d7d8c2e3492edc8b60"
 dependencies = [
  "cfg-if",
  "windows-link",
@@ -4790,6 +4828,7 @@ version = "2.0.0-rc.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4336a1e2b38848325241c72889086886004e589b7c74f335e60a8e8db5138a0b"
 dependencies = [
+ "libloading 0.9.0",
  "ndarray",
  "ort-sys",
  "smallvec",
@@ -5480,6 +5519,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "ref-cast"
+version = "1.0.27"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7e440fb4e4b4147295338efb76001ab9e4efc0e5839df2c47fc5ac2381d365c3"
+dependencies = [
+ "ref-cast-impl",
+]
+
+[[package]]
+name = "ref-cast-impl"
+version = "1.0.27"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "92ecd8964f8453721699a1ed72037b0db49ce2f5a5138486ee89bed6f67cdf3a"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.4",
+]
+
+[[package]]
 name = "regex"
 version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5754,6 +5813,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "schemars"
+version = "1.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab508826f74a77ca9d5aba6ff19b522583ee3eaf28a19384ff3d0e5835fadf6e"
+dependencies = [
+ "dyn-clone",
+ "ref-cast",
+ "schemars_derive",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "schemars_derive"
+version = "1.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e1c3a92094fa7d61aa124645844facb6b554dfc797136d0f5fd1f890e2bffc69"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "serde_derive_internals",
+ "syn 3.0.4",
+]
+
+[[package]]
 name = "scoped-tls"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5837,6 +5921,17 @@ name = "serde_derive"
 version = "1.0.229"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e7a5d71263a5a7d47b41f6b3f06ba276f10cc18b0931f1799f710578e2309348"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.4",
+]
+
+[[package]]
+name = "serde_derive_internals"
+version = "0.30.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f852137cce035d6a4df67ccce505ff6b3e9fd3a10e3e52b24dc71e650bb1a9bd"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6402,7 +6497,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.4",
  "windows-sys 0.61.2",
@@ -6541,7 +6636,7 @@ checksum = "a90a0ca3ee6a69f2ad28fd11621a4c3f03b371f366be500b64df260c4ffbafb4"
 dependencies = [
  "as-raw-xcb-connection",
  "ctor",
- "libloading",
+ "libloading 0.8.9",
  "pkg-config",
  "tracing",
 ]
@@ -7551,7 +7646,7 @@ dependencies = [
  "js-sys",
  "khronos-egl",
  "libc",
- "libloading",
+ "libloading 0.8.9",
  "log",
  "naga",
  "naga-types",
@@ -7623,8 +7718,6 @@ dependencies = [
 [[package]]
 name = "whisper-rs-sys"
 version = "0.15.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6986c0fe081241d391f09b9a071fbcbb59720c3563628c3c829057cf69f2a56f"
 dependencies = [
  "bindgen",
  "cfg-if",
@@ -8160,7 +8253,7 @@ dependencies = [
  "as-raw-xcb-connection",
  "gethostname",
  "libc",
- "libloading",
+ "libloading 0.8.9",
  "once_cell",
  "rustix 1.1.4",
  "x11rb-protocol",

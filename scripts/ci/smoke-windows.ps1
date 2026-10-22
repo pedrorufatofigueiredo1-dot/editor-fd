@@ -18,7 +18,8 @@
 #    the first frame of the window, then the program leaves.
 # 4. With -Sde, `--version` again under Intel's emulator posing as an Ivy
 #    Bridge (AVX, nothing newer), which stops the program at the first
-#    instruction that chip does not have. x86_64 only.
+#    instruction that chip does not have; then `--whisper-cpu`, loading
+#    whisper's CPU kernels, posing as a Sandy Bridge. x86_64 only.
 #
 # concat.exe is a GUI program: it has no console, so it is judged by its
 # exit code and not by what it prints. Windows' error dialogs are turned
@@ -62,6 +63,27 @@ $meanings = @{
   [int]0xC0E90002 = "a code integrity block (Smart App Control) on an unsigned or untrusted file"
 }
 
+# What Windows wrote down about a program that crashed since $since: the
+# Application Error event (1000) names the faulting module, its version
+# and the offset into it, which is the one thing an exit code cannot say.
+# It covers a crash before main as well as after, where the app's own
+# handler (concat-host's crash.rs) is not installed yet. Windows writes the
+# event a moment after the process is gone, so it is waited for briefly.
+function Show-Crash($file, $since) {
+  $exe = [IO.Path]::GetFileName($file)
+  for ($try = 0; $try -lt 10; $try++) {
+    $event = Get-WinEvent -FilterHashtable @{ LogName = "Application"; Id = 1000; StartTime = $since } -ErrorAction SilentlyContinue |
+      Where-Object { $_.Message -match [regex]::Escape($exe) } | Select-Object -First 1
+    if ($event) {
+      Say "what Windows recorded about the crash"
+      $event.Message -split "`n" | ForEach-Object { Write-Host "  $($_.TrimEnd())" }
+      return
+    }
+    Start-Sleep -Milliseconds 500
+  }
+  Write-Host "  (Windows recorded no Application Error event for $exe)"
+}
+
 # Starts a program with the given PATH and waits for it, up to a limit;
 # fails unless it exits 0. Its output is shown when there is any.
 function Expect-Ok($what, $file, [string[]]$arguments, $path, $seconds) {
@@ -75,6 +97,7 @@ function Expect-Ok($what, $file, [string[]]$arguments, $path, $seconds) {
   # in the folder it was started from.
   $info.WorkingDirectory = [IO.Path]::GetTempPath()
   $info.Environment["PATH"] = $path
+  $started = Get-Date
   $process = [System.Diagnostics.Process]::Start($info)
   $stdout = $process.StandardOutput.ReadToEndAsync()
   $stderr = $process.StandardError.ReadToEndAsync()
@@ -87,6 +110,7 @@ function Expect-Ok($what, $file, [string[]]$arguments, $path, $seconds) {
   if ($out) { $out -split "`n" | Select-Object -Last 60 | ForEach-Object { Write-Host "  $_" } }
   $code = $process.ExitCode
   if ($code -ne 0) {
+    Show-Crash $file $started
     $meaning = $meanings[[int]$code]
     Fail ("${what}: exited with 0x{0:X8}{1}" -f $code, $(if ($meaning) { " - $meaning" } else { "" }))
   }
@@ -156,6 +180,14 @@ if ($Sde) {
   # The emulator's own folder too: it loads its pieces from beside itself.
   $path = (Split-Path $sdeExe) + ";" + $bare
   Expect-Ok "concat.exe --version under SDE -ivb" $sdeExe @("-ivb", "--", $exe, "--version") $path 600
+
+  # whisper's CPU kernels, one DLL per CPU generation: ggml loads every
+  # one to score it against the CPU before it keeps the best, so the
+  # Haswell and Ice Lake DLLs are loaded here too, on a Sandy Bridge - AVX
+  # without even F16C, like #318's i7-2600 - which must come out with the
+  # sandybridge DLL and no illegal instruction.
+  Say "concat.exe --whisper-cpu on an emulated Sandy Bridge"
+  Expect-Ok "concat.exe --whisper-cpu under SDE -snb" $sdeExe @("-snb", "--", $exe, "--whisper-cpu") $path 600
 }
 
 Say "ok"

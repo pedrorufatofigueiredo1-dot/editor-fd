@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// SPDX-FileCopyrightText: 2026 Jareer and Concat contributors
+// SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
 
 import { I18n } from "../i18n.slint";
 import { Theme } from "../theme/theme.slint";
@@ -14,6 +14,15 @@ import { Select } from "select.slint";
 // and shown by a property. Everything under it keeps existing — a modal is a
 // scrim over the app, not a replacement for it — which is why the scrim takes
 // pointer events rather than merely painting over them.
+//
+// Or, `floating`, no scrim at all: a card over the editor that the work
+// beside it carries on under, the way the voiceover panel floats - for a
+// tool that is used beside the timeline rather than instead of it, whose
+// job may run for minutes (Captions, Text to speech). Nothing behind it is
+// held back; the card goes where its header is dragged, stays wholly
+// inside the window, and keeps where it was put for as long as the window
+// is open. Its × is always there: closing it does not stop a job, which
+// keeps running and is shown again when it is opened again.
 export component Modal inherits Rectangle {
     in property <bool> open;
     in property <string> title;
@@ -28,17 +37,46 @@ export component Modal inherits Rectangle {
     /// Zero fits the content, which is what a short dialog wants; a fixed
     /// height is for the ones with their own scrolling body.
     in property <length> surface-height: 0px;
+    /// The sheet is the window, inside its safe area, rather than a card
+    /// floating in it: what a phone or a narrow window wants for a sheet
+    /// with pages of its own, where a card left a third of the screen to
+    /// the scrim. A short dialog - a question - stays a card.
+    in property <bool> fill;
+    /// How far the system's bars reach into the window on each side (the
+    /// window's safe-area-insets; zero on a desk). The sheet stays inside.
+    in property <length> inset-top;
+    in property <length> inset-bottom;
+    in property <length> inset-left;
+    in property <length> inset-right;
+    /// A card over a live editor rather than a sheet over a scrim; see
+    /// above. Never with `fill`: a phone keeps its sheet.
+    in property <bool> floating;
+    /// Where a floating card starts, from the window's top right corner:
+    /// under the title strip, over the inspector. Two cards are given
+    /// different homes so they do not open exactly on top of each other.
+    in property <length> home-right: 16px;
+    in property <length> home-top: 48px;
 
     callback closed();
+    /// A floating card was pressed on its header: it wants to be in front.
+    callback raised();
 
     visible: root.open;
+    // A card opened comes to the front.
+    changed open => {
+        if (root.open) {
+            root.raised();
+        }
+    }
     // Dark rather than blurred: Slint has no backdrop filter, and a scrim that
     // only dims is honest about that where a fake blur would not be.
-    background: Theme.overlay;
+    background: root.floating ? Colors.transparent
+        : root.fill ? Theme.panel : Theme.overlay;
 
     // Declared first, so the surface and everything in it sits above and takes
     // its own presses. A click that lands here landed outside the dialog.
-    TouchArea {
+    // A floating card has none: a click beside it is a click on the editor.
+    if !root.floating: TouchArea {
         clicked => {
             if (root.dismissable) {
                 root.closed();
@@ -46,30 +84,73 @@ export component Modal inherits Rectangle {
         }
     }
 
+    /// The room inside the system's bars.
+    property <length> room-w: root.width - root.inset-left - root.inset-right;
+    property <length> room-h: root.height - root.inset-top - root.inset-bottom;
+
+    // A floating card's place: its home, moved by however far its header
+    // has been dragged, and held inside the window - the drag included, so
+    // pulling it back from an edge moves it at once, and a window made
+    // smaller brings it along.
+    property <length> home-x: root.width - surface.width - root.home-right - root.inset-right;
+    property <length> home-y: root.home-top + root.inset-top;
+    property <length> dx;
+    property <length> dy;
+    property <length> min-dx: root.inset-left + 8px - root.home-x;
+    property <length> max-dx: root.width - root.inset-right - surface.width - 8px - root.home-x;
+    property <length> min-dy: root.inset-top + 8px - root.home-y;
+    property <length> max-dy: root.height - root.inset-bottom - surface.height - 8px - root.home-y;
+
     surface := Rectangle {
-        x: (parent.width - self.width) / 2;
-        y: (parent.height - self.height) / 2;
-        // Never wider or taller than the window less a margin: a phone held
-        // upright is narrower than any sheet's width, and a sheet that runs
-        // off both edges cannot be read or dismissed. On a desk the window's
-        // minimum is past every sheet's size, so this decides nothing there.
-        width: Math.min(root.surface-width, root.width - 24px);
-        height: Math.min(
+        x: root.floating ? root.home-x + Math.max(root.min-dx, Math.min(root.max-dx, root.dx))
+            : root.inset-left + (root.room-w - self.width) / 2;
+        y: root.floating ? root.home-y + Math.max(root.min-dy, Math.min(root.max-dy, root.dy))
+            : root.inset-top + (root.room-h - self.height) / 2;
+        // Filling, the room inside the bars. Otherwise never wider or taller
+        // than that room less a margin: a phone held upright is narrower than
+        // any sheet's width, and a sheet that runs off both edges cannot be
+        // read or dismissed. On a desk the window's minimum is past every
+        // sheet's size, so this decides nothing there.
+        width: root.fill ? root.room-w : Math.min(root.surface-width, root.room-w - 24px);
+        height: root.fill ? root.room-h : Math.min(
             root.surface-height > 0px ? root.surface-height : body.preferred-height,
-            root.height - 24px);
+            root.room-h - 24px);
         background: Theme.panel;
-        border-width: 1px;
+        border-width: root.fill ? 0px : 1px;
         border-color: Theme.line-strong;
-        border-radius: Theme.r-xl;
+        border-radius: root.fill ? 0px : Theme.r-xl;
+        // Lifted off the editor it floats over, as the voiceover card is.
+        drop-shadow-blur: root.floating ? 24px : 0px;
+        drop-shadow-offset-y: root.floating ? 6px : 0px;
+        drop-shadow-color: root.floating ? #00000059 : Colors.transparent;
         clip: true;
 
         // Swallows presses that land on the dialog, so they do not reach the
-        // scrim underneath and dismiss it.
+        // scrim underneath and dismiss it - or, floating, the lanes and the
+        // monitor under the card.
         TouchArea { }
 
         body := VerticalLayout {
             Rectangle {
                 height: 42px;
+
+                // What drags a floating card, under the title and the ×.
+                if root.floating: TouchArea {
+                    mouse-cursor: move;
+                    pointer-event(event) => {
+                        if (event.kind == PointerEventKind.down) {
+                            root.raised();
+                        }
+                    }
+                    moved => {
+                        if (self.pressed) {
+                            root.dx = Math.max(root.min-dx, Math.min(root.max-dx,
+                                root.dx + self.mouse-x - self.pressed-x));
+                            root.dy = Math.max(root.min-dy, Math.min(root.max-dy,
+                                root.dy + self.mouse-y - self.pressed-y));
+                        }
+                    }
+                }
 
                 Rectangle {
                     x: 0;
@@ -99,8 +180,9 @@ export component Modal inherits Rectangle {
 
                     // Gone, not disabled, while a job is running: there is no
                     // safe answer to pressing it, so it should not be there to
-                    // press.
-                    if root.dismissable: VerticalLayout {
+                    // press. A floating card's always is: closing it leaves
+                    // the job running, to be seen again when it is opened.
+                    if root.dismissable || root.floating: VerticalLayout {
                         alignment: center;
                         Rectangle {
                             width: 26px;
@@ -306,14 +388,52 @@ export component CopyChip inherits Rectangle {
 
 // A determinate bar. Nothing indeterminate: every job in this app can say how
 // far along it is, and a barber's pole for one that can is a lie.
+//
+// What a job says can be coarse - a transcription reports once per thirty
+// seconds of sound, a read once per sentence - so a job that knows where
+// the step under way ends gives it as `ceiling`, and the time the step
+// should take as `step`. The fill moves from `value` toward `ceiling` over
+// that time, steadily for nine tenths of the way and then ever slower, so
+// it never reaches the ceiling before the job reports it has. A report
+// ahead of the fill slides it forward rather than jumping. While `live`, a
+// sheen runs along the fill to say the job is still at work, which a fill
+// waiting on a report would not; the sheen never moves the fill.
 export component Progress inherits Rectangle {
     in property <float> value;
+    /// Where the step under way leaves the bar; `value` when the job does
+    /// not say.
+    in property <float> ceiling: root.value;
+    /// How long that step should take.
+    in property <duration> step;
     /// Finished: the bar turns green rather than staying accent, so a glance
     /// tells you it is over without reading the row above it.
     in property <bool> done;
+    /// The job is running: the sheen runs along the fill.
+    in property <bool> live;
+    /// Where the fill is, 0..1: what a percentage beside the bar reads.
+    out property <float> shown: Math.clamp(
+        root.ceiling > root.value && root.step > 0ms
+            ? root.value + (root.ceiling - root.value) * root.creep((animation-tick() - root.mark) / root.step)
+            : root.value,
+        0, 1);
+    /// The time since the last report, for a countdown beside the bar.
+    out property <duration> since: animation-tick() - root.mark;
 
-    height: 4px;
-    border-radius: 2px;
+    /// When the job last reported.
+    property <duration> mark;
+    init => { root.mark = animation-tick(); }
+    changed value => { root.mark = animation-tick(); }
+    changed ceiling => { root.mark = animation-tick(); }
+
+    /// How far toward the ceiling the fill is `u` steps in: in a straight
+    /// line to nine tenths at one step, then half the rest by two, and so
+    /// on, never the whole.
+    pure function creep(u: float) -> float {
+        return u <= 1 ? 0.9 * Math.max(u, 0) : 0.9 + 0.1 * (u - 1) / u;
+    }
+
+    height: 8px;
+    border-radius: self.height / 2;
     background: Theme.well;
     border-width: 1px;
     border-color: Theme.line;
@@ -322,10 +442,21 @@ export component Progress inherits Rectangle {
     Rectangle {
         x: 0;
         y: 0;
-        width: parent.width * Math.clamp(root.value, 0, 1);
+        // Never thinner than it is tall once it has begun, so its end is
+        // round from the first step.
+        width: root.shown > 0 ? Math.max(parent.height, parent.width * root.shown) : 0px;
+        animate width { duration: 280ms; easing: ease-out; }
         height: parent.height;
-        border-radius: 2px;
+        border-radius: self.height / 2;
         background: root.done ? Theme.green : Theme.accent;
+        clip: true;
+
+        if root.live && !root.done: Rectangle {
+            property <float> phase: Math.mod(animation-tick() / 1ms, 1800) / 1800;
+            width: Math.max(48px, root.width / 4);
+            x: (parent.width + self.width) * self.phase - self.width;
+            background: @linear-gradient(90deg, #ffffff00 0%, #ffffff59 50%, #ffffff00 100%);
+        }
     }
 }
 
@@ -347,6 +478,9 @@ export component DialogSection inherits VerticalLayout {
     in-out property <bool> open: true;
     /// suppress the leading hairline, for the first group in a sheet
     in property <bool> first;
+    /// A hairline above the group, setting it off from the one before. Off,
+    /// the groups are told apart by a gap alone, as the Settings sheet's are.
+    in property <bool> ruled: true;
     /// The paragraph that would otherwise sit under the controls, moved to
     /// a question mark beside the title: read on hover, out of the way
     /// otherwise.
@@ -370,9 +504,12 @@ export component DialogSection inherits VerticalLayout {
     in property <int> choice;
     callback chose(index: int);
 
-    if !root.first: Rectangle {
+    if !root.first && root.ruled: Rectangle {
         height: 1px;
         background: Theme.line;
+    }
+    if !root.first && !root.ruled: Rectangle {
+        height: 6px;
     }
 
     // The header band. Tight to the title, because the gap under it is the
@@ -460,7 +597,7 @@ export component DialogSection inherits VerticalLayout {
                 }
             }
 
-            // The same pill as the inspector's Switch, drawn from `on`
+            // The same switch as the inspector's, drawn from `on`
             // rather than holding a checked state of its own.
             if root.switchable: VerticalLayout {
                 alignment: center;
@@ -468,7 +605,7 @@ export component DialogSection inherits VerticalLayout {
                 Rectangle {
                     width: 30px;
                     height: 17px;
-                    border-radius: self.height / 2;
+                    border-radius: Theme.r-sm;
                     background: root.on ? Theme.accent : Theme.field-active;
 
                     animate background { duration: 120ms; easing: cubic-bezier(0.4, 0, 0.2, 1); }
@@ -478,7 +615,7 @@ export component DialogSection inherits VerticalLayout {
                         y: (parent.height - self.height) / 2;
                         width: 13px;
                         height: 13px;
-                        border-radius: self.width / 2;
+                        border-radius: Theme.r-xs;
                         background: Theme.on-accent;
 
                         animate x { duration: 120ms; easing: cubic-bezier(0.4, 0, 0.2, 1); }

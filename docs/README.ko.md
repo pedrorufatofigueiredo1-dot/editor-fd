@@ -1,32 +1,29 @@
+<p align="center">
+  <img src="https://cdn.jsdelivr.net/gh/jub0t/Concat@main/assets/concat-mark-dark.png" alt="Concat" width="100" />
+</p>
+
+<h1 align="center">Concat</h1>
+<h3 align="center">무료 오픈 소스 크로스 플랫폼 CapCut 대체재.</h3>
+
 <div align="center">
-<table width="100%">
-  <tr>
-    <td align="left" width="120">
-      <img src="https://cdn.jsdelivr.net/gh/jub0t/Concat@main/assets/concat-mark-dark.png" alt="Concat" width="100" />
-    </td>
-    <td align="">
-      <h1>Concat</h1>
-      <h3 style="margin-top: -10px;">진정으로 무료이며 오픈 소스인 크로스 플랫폼 CapCut 대체재.</h3>
-    </td>
-  </tr>
-</table>
 
 <img src="https://cdn.jsdelivr.net/gh/jub0t/Concat@main/assets/editor.png" alt="Concat editor" width="100%" />
 
 <p align="center">
-  <a href="https://github.com/jub0t/Concat/releases"><img src="https://img.shields.io/github/downloads/jub0t/concat/total?style=flat-square&logo=github&logoColor=F8F8F8&label=Downloads&labelColor=212123&color=0568FD" alt="Total Downloads" /></a>
+  <a href="https://github.com/jub0t/Concat/releases"><img src="https://img.shields.io/github/downloads/jub0t/concat/total?style=flat&logo=github&logoColor=F8F8F8&label=Downloads&labelColor=212123&color=0568FD" alt="Total Downloads" /></a>
   <a href="https://github.com/jub0t/Concat/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/jub0t/Concat/ci.yml?style=flat&logo=githubactions&logoColor=F8F8F8&label=Build&labelColor=000000" alt="Build Status" /></a>
-  <a href="https://github.com/jub0t/Concat/releases"><img src="https://img.shields.io/badge/Version-0.2.7-0568FD?style=flat-square&logo=semver&logoColor=F8F8F8&labelColor=212123" alt="Concat Version 0.2.5" /></a>
+  <a href="https://github.com/jub0t/Concat/releases"><img src="https://img.shields.io/badge/Version-0.2.8-0568FD?style=flat&logo=semver&logoColor=F8F8F8&labelColor=212123" alt="Concat Version 0.2.8" /></a>
   <a href="https://discord.gg/DVuPfpXfqP"><img src="https://img.shields.io/badge/Discord-Join%20the%20server-5865F2?style=flat&logo=discord&logoColor=F8F8F8&labelColor=000000" alt="Join Concat Discord" /></a>
-  <a href="../LICENSE"><img src="https://img.shields.io/badge/License-AGPL%20v3-0568FD?style=flat-square&logo=gnu&logoColor=F8F8F8&labelColor=212123" alt="License: AGPL-3.0-or-later" /></a>
-  <a href="https://concatenate.pages.dev/#sponsor"><img src="https://img.shields.io/badge/Sponsor-Concat-0568FD?style=flat-square&labelColor=212123" alt="Sponsor Concat" /></a>
+  <a href="../LICENSE"><img src="https://img.shields.io/badge/License-AGPL%20v3-0568FD?style=flat&logo=gnu&logoColor=F8F8F8&labelColor=212123" alt="License: AGPL-3.0-or-later" /></a>
 </p>
 
 <p align="center">
-  <a href="https://concatenate.pages.dev/#download"><img src="https://cdn.jsdelivr.net/gh/jub0t/Concat@main/assets/download_button.svg" alt="Download Concat" width="220" /></a>
+  <a href="https://www.star-history.com/jub0t/concat"><img src="https://api.star-history.com/badge?repo=jub0t/concat&type=rank" alt="Star History Rank" height="62" /></a>
+  <a href="https://trendshift.io/repositories/191379?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-191379" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/191379/daily?language=Rust" alt="jub0t%2FConcat | Trendshift" width="250" height="55"/></a>
+  <a href="https://concatenate.pages.dev/#download"><img src="../assets/download_button.svg" alt="Download Concat" width="251" /></a>
 </p>
 
-[🇬🇧 English](../README.md) · [🇩🇪 Deutsch](README.de.md) · [🇪🇸 Español](README.es.md) · [🇫🇷 Français](README.fr.md) · [🇮🇹 Italiano](README.it.md) · [🇳🇱 Nederlands](README.nl.md) · [🇵🇱 Polski](README.pl.md) · [🇧🇷 Português (Brasil)](README.pt-BR.md) · [🇷🇺 Русский](README.ru.md) · [🇺🇦 Українська](README.uk.md) · [🇹🇷 Türkçe](README.tr.md) · [🇭🇷 Hrvatski](README.hr.md) · [🇮🇩 Bahasa Indonesia](README.id.md) · [🇻🇳 Tiếng Việt](README.vi.md) · [🇹🇭 ไทย](README.th.md) · [🇯🇵 日本語](README.ja.md) · **🇰🇷 한국어** · [🇨🇳 简体中文](README.zh-Hans.md) · [🇹🇼 繁體中文](README.zh-TW.md) · [🇸🇦 العربية](README.ar.md) · [🇮🇱 עברית](README.he.md) · [🇮🇷 فارسی](README.fa.md) · [🇮🇳 हिन्दी](README.hi.md) · [🇵🇰 اردو](README.ur.md) · [🇧🇩 বাংলা](README.bn.md)
+[🇬🇧 English](../README.md) · [🇩🇪 Deutsch](README.de.md) · [🇪🇸 Español](README.es.md) · [🇫🇷 Français](README.fr.md) · [🇮🇹 Italiano](README.it.md) · [🇳🇱 Nederlands](README.nl.md) · [🇵🇱 Polski](README.pl.md) · [🇧🇷 Português (Brasil)](README.pt-BR.md) · [🇷🇺 Русский](README.ru.md) · [🇺🇦 Українська](README.uk.md) · [🇹🇷 Türkçe](README.tr.md) · [🇦🇿 Azərbaycanca](README.az.md) · [🇭🇷 Hrvatski](README.hr.md) · [🇮🇩 Bahasa Indonesia](README.id.md) · [🇻🇳 Tiếng Việt](README.vi.md) · [🇹🇭 ไทย](README.th.md) · [🇯🇵 日本語](README.ja.md) · **🇰🇷 한국어** · [🇨🇳 简体中文](README.zh-Hans.md) · [🇹🇼 繁體中文](README.zh-TW.md) · [🇸🇦 العربية](README.ar.md) · [🇮🇱 עברית](README.he.md) · [🇮🇷 فارسی](README.fa.md) · [🇮🇳 हिन्दी](README.hi.md) · [🇵🇰 اردو](README.ur.md) · [🇧🇩 বাংলা](README.bn.md)
 
 > 2026년 10월 11일 기준 영어 README를 번역한 것입니다. 최신 내용은 영어판이 유지합니다.
 
@@ -34,14 +31,10 @@
 
 <table width="100%">
   <tr>
-    <td align="center" width="50%">
+    <td align="center">
       <a href="https://proxyon.io/?ref=concat"><img src="https://cdn.jsdelivr.net/gh/jub0t/Concat@main/assets/proxyon_sponsor_logo.png" alt="Proxyon" width="80" /></a><br />
       <a href="https://proxyon.io/?ref=concat"><b>Proxyon</b></a><br />
       <sub>개발자를 위한 종량제 프록시<br />코드 <code>JUB0T</code>로 20 % 할인</sub>
-    </td>
-    <td align="center" width="50%">
-      <a href="https://concatenate.pages.dev/#sponsor"><b>여기에 당신의 로고를</b></a><br />
-      <sub><a href="https://concatenate.pages.dev/#sponsor">Concat을 후원하면</a> 당신의 이름, 로고, 링크가 이 자리에 실립니다</sub>
     </td>
   </tr>
 </table>
@@ -57,7 +50,7 @@ Concat은 macOS, Windows, Linux, Android용 무료 오픈 소스 비디오 편�
 
 **이런 데 좋습니다:** TikTok, Reels, Shorts, YouTube 영상, 튜토리얼과 화면 녹화, 팟캐스트 클립, 밈.
 
-**기계를 위해서도:** JSON-RPC, gRPC, MCP API가 있어 스크립트와 AI 에이전트도 이것으로 영상을 편집할 수 있습니다.
+**기계를 위해서도:** JSON-RPC API가 있어 스크립트와 AI 에이전트도 이것으로 영상을 편집할 수 있습니다.
 
 ## 주요 기능
 
@@ -67,15 +60,15 @@ Concat은 macOS, Windows, Linux, Android용 무료 오픈 소스 비디오 편�
 - 🗣️ **텍스트 음성 변환 + 음성 복제.** 무료 로컬 음성, 또는 몇 초의 녹음으로 어떤 목소리든.
 - 🧍 **배경 제거.** 사람, 사물, 또는 직접 마스크를 칠하세요.
 - 🎞️ **키프레임.** 위치, 크기, 회전, 불투명도, 볼륨, 효과 매개변수. 커브 편집기 내장.
-- ✨ **170개 이상의 효과, 필터, 전환, 텍스트 애니메이션.** GPU 렌더링, 미리보기에서 실시간.
+- ✨ **100가지 효과, 필터, 전환.** GPU 렌더링, 미리보기에서 실시간.
 - ✂️ **빠른 편집.** 분할, 트림, 리플, 병합, 프레임 고정, 속도. 원하면 자석 타임라인.
 - 🎚️ **멀티트랙, 멀티타임라인.** 한 프로젝트에 여러 편집본. 혼합 모드, 자르기, 뒤집기.
 - 📝 **타이틀.** 글꼴, 외곽선, 그림자, 배경 판. 시작점이 되는 프리셋.
 - 🎙️ **스위치 하나로 음성 정리.** 잡음 제거, 음성 강조, 음량 평준화. 그리고 다람쥐, 로봇, 전화 목소리 등.
 - 📤 **내보내기.** H.264, HEVC, AV1. 최대 4K 60, 10비트 색상.
 - 🦀 **네이티브 Rust 엔진.** GPU 컴포지터, 프록시, 하드웨어 디코딩. 4K도 부드럽게 스크러빙.
-- 🤖 **스크립트 가능.** JSON-RPC, gRPC, MCP API와 CLI. AI 에이전트가 이것으로 영상을 편집할 수 있습니다.
-- 🖥️ **macOS, Windows, Linux, Android.** 25개 언어. 같은 앱, 같은 프로젝트 파일.
+- 🤖 **스크립트 가능.** 스크립트와 AI 에이전트가 영상을 편집할 수 있는 JSON-RPC API. 소스에서 빌드하면 gRPC와 명령줄 도구가 추가됩니다.
+- 🖥️ **macOS, Windows, Linux, Android.** 26개 언어. 같은 앱, 같은 프로젝트 파일.
 
 ## 다운로드
 
@@ -88,7 +81,7 @@ Concat은 **베타**입니다: 동작하지만 아직 거친 부분이 있습니
 
 **플랫폼**
 
-- ✅ **Windows** · x86_64와 ARM. 설치 프로그램과 `.msi`. SmartScreen이 서명되지 않은 빌드를 막으면: **추가 정보** › **실행**
+- ✅ **Windows** · x86_64 (ARM 빌드는 일시 중단됨, [#326](https://github.com/jub0t/Concat/issues/326) 참고). 설치 프로그램과 `.msi`. SmartScreen이 서명되지 않은 빌드를 막으면: **추가 정보** › **실행**
 - ✅ **macOS** · Intel과 Apple Silicon. macOS가 서명되지 않은 빌드를 열지 않으면: `xattr -dr com.apple.quarantine /Applications/Concat.app`
 - ✅ **Linux** · x86_64와 ARM. `.deb`, `.rpm`, `.AppImage`, Arch 패키지. 그리고 **[Flatpark](https://flatpark.org/apps/app.concat.editor/)**의 Flatpak도 있습니다. 각 릴리스의 x86_64 `.deb`를 감싸고 릴리스와 함께 업데이트되는 커뮤니티 Flatpak 원격 저장소입니다
 - ✅ **Android** · 휴대폰과 태블릿
@@ -105,34 +98,20 @@ Concat은 **베타**입니다: 동작하지만 아직 거친 부분이 있습니
 > [!IMPORTANT]
 > 가장 좋은 기여는 [Releases](https://github.com/jub0t/Concat/releases) 페이지에서 빌드를 받아 써 보는 것입니다: 어디서 깨지는지 찾고, 어디가 더 나아질 수 있는지 말해 주세요.
 >
-> 코드를 쓸 준비가 되셨나요? [CONTRIBUTING.md](../CONTRIBUTING.md)에 설정, 트리 구조, 실행할 검사, 기여의 라이선스가 적혀 있습니다. 스크립트, 서비스, 에이전트에서 Concat을 다루시나요? [개발자 문서](https://concatenate.pages.dev/docs)에 Concat API와 전송 방식(JSON-RPC, gRPC, MCP)이 있습니다. 프로젝트는 [이 Discussion](https://github.com/jub0t/Concat/discussions/3)에서 공개되었습니다.
+> 코드를 쓸 준비가 되셨나요? [CONTRIBUTING.md](../CONTRIBUTING.md)에 설정, 트리 구조, 실행할 검사, 기여의 라이선스가 적혀 있습니다. 스크립트, 서비스, 에이전트에서 Concat을 다루시나요? [개발자 문서](https://concatenate.pages.dev/docs)에 Concat API와 전송 방식(JSON-RPC, gRPC)이 있습니다. 프로젝트는 [이 Discussion](https://github.com/jub0t/Concat/discussions/3)에서 공개되었습니다.
 > 
 > 기여자는 Discord 서버에서 `@Contributor` 역할을 받을 수 있습니다. 요청만 하세요.
+
+## 스타 추이
+
+<a href="https://www.star-history.com/?repos=jub0t%2Fconcat&type=date&releases=&legend=bottom-right">
+ <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=jub0t/concat&type=date&legend=bottom-right" />
+</a>
 
 ## 기여자
 
 <a href="https://github.com/jub0t/Concat/graphs/contributors">
   <img alt="Contributors" src="https://contrib.rocks/image?repo=jub0t/concat">
-</a>
-
-## 스타 추이
-
-<p align="center">
- <a href="https://www.star-history.com/jub0t/concat">
-  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/badge?repo=jub0t/concat&type=rank&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/badge?repo=jub0t/concat&type=rank" />
-   <img alt="Star History Rank" src="https://api.star-history.com/badge?repo=jub0t/concat&type=rank" />
-  </picture>
- </a>
-</p>
-
-<a href="https://www.star-history.com/?repos=jub0t%2Fconcat&type=date&releases=&legend=bottom-right">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=jub0t/concat&type=date&theme=dark&legend=bottom-right" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=jub0t/concat&type=date&legend=bottom-right" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=jub0t/concat&type=date&legend=bottom-right" />
- </picture>
 </a>
 
 ## DMCA

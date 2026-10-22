@@ -97,6 +97,20 @@ slint = { version = "1.18", default-features = false, features = [
     # embeds, so a preset card is drawn in its own face; see fonts.rs.
     "unstable-fontique-011",
 ] }
+# The system's pickers for Import and Photos for an export, through the
+# Objective-C runtime; see src/ios.rs. The versions Slint's winit backend
+# already builds on iOS, so nothing new is compiled for them.
+objc2 = "0.6"
+block2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = [
+    "std",
+    "block2",
+    "NSArray",
+    "NSError",
+    "NSObject",
+    "NSString",
+    "NSURL",
+] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 slint = { version = "1.18", default-features = false, features = [
@@ -128,10 +142,13 @@ concat-project.workspace = true
 concat-export.workspace = true
 concat-host = { workspace = true, features = ["gpu"] }
 concat-speech = { workspace = true, features = ["chatterbox"] }
-# The Settings sheet's Remote page: the Concat API on a socket while the
+# The Settings sheet's Automation page: the Concat API on a socket while the
 # window is open. JSON-RPC only; the gRPC feature stays with concat-cli.
 concat-server.workspace = true
 concat-api.workspace = true
+# `concat --mcp`: the same API to an AI agent, as an MCP server on standard
+# input and output, with no window (docs/MCP.md).
+concat-mcp.workspace = true
 # The effect catalogue: the inspector's shelves and each link's knobs.
 concat-effects.workspace = true
 # The cutout's mapping from a stage press to a source fraction; the model

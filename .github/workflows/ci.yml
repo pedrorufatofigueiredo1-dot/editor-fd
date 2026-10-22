@@ -34,7 +34,7 @@ concurrency:
 jobs:
   engine:
     name: Engine tests and lints
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # The steps that can run long have timeouts of their own, 110 minutes
     # between them, so a stuck step is named by its own timeout; this is
     # for a job stuck anywhere else. A warm run takes about twenty minutes.
@@ -53,13 +53,13 @@ jobs:
       - name: The pinned toolchain
         id: toolchain
         run: echo "channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' src/rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
-      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master (v1), 2026-10-09
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master (v1), 2026-10-09
         with:
           toolchain: ${{ steps.toolchain.outputs.channel }}
           components: clippy, rustfmt
       # cargo-nextest runs the tests: each in a process of its own, with a
       # timeout per test and a JUnit report. See src/.config/nextest.toml.
-      - uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2.87.27
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
           tool: cargo-nextest@0.9.148
       # Saved even when the job fails: a cache saved only by a green run
@@ -172,6 +172,7 @@ jobs:
           CARGO_PROFILE_DEV_DEBUG: "0"
           CONCAT_REQUIRE_GPU: "1"
         run: |
+          set -o pipefail
           status=0
           cargo nextest run --workspace --build-jobs 1 --profile ci 2>&1 | tee nextest-workspace.log || status=$?
           mv target/nextest/ci/junit.xml target/nextest/ci/junit-workspace.xml 2>/dev/null || true
@@ -192,6 +193,7 @@ jobs:
         timeout-minutes: 10
         working-directory: src
         run: |
+          set -o pipefail
           status=0
           cargo nextest run -p concat-server --features grpc --profile ci 2>&1 | tee nextest-grpc.log || status=$?
           mv target/nextest/ci/junit.xml target/nextest/ci/junit-grpc.xml 2>/dev/null || true
@@ -249,10 +251,10 @@ jobs:
         id: toolchain
         shell: bash
         run: echo "channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' src/rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
-      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master (v1), 2026-10-09
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master (v1), 2026-10-09
         with:
           toolchain: ${{ steps.toolchain.outputs.channel }}
-      - uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2.87.27
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         if: runner.os == 'Windows'
         with:
           tool: cargo-nextest@0.9.148

@@ -1,18 +1,29 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// SPDX-FileCopyrightText: 2026 Jareer and Concat contributors
+// SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
 
 //! Desktop launch arguments, kept separate from the window and engine.
 
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-const USAGE: &str = "usage: concat [--project <PROJECT_DIRECTORY> | --version | --smoke]";
+const USAGE: &str = "usage: concat [--project <PROJECT_DIRECTORY> | --software | --mcp [auto|window|headless] | --version | --smoke | --whisper-cpu]";
 
 /// What one run of the binary was asked to do.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Launch {
     /// The window, on the launch screen or on the project it names.
     Normal(Option<PathBuf>),
+    /// The window on the launch screen, drawn in software from now on: what
+    /// the Start menu's "Concat (safe graphics)" runs, for a driver that
+    /// draws the window as coloured squares, where Settings' GPU switch
+    /// cannot be seen to be turned off (#389, #242, #449).
+    Software,
+    /// Serve the Concat API to an AI agent as an MCP server on standard
+    /// input and output, with no window: what an agent's configuration
+    /// names (docs/MCP.md). The mode, when given: through the window's
+    /// server, on its own, or whichever is there; `CONCAT_MCP_MODE`
+    /// otherwise, and `auto` without that.
+    Mcp(Option<concat_mcp::Mode>),
     /// Print the version and exit, before logging, the GPU or a window: a
     /// run that gets this far has proved the executable and every library
     /// it links were found and loaded, which on Windows fails before `main`.
@@ -21,6 +32,14 @@ pub enum Launch {
     /// the window's models, and exit instead of entering the event loop.
     /// For CI, which has no one to close a window.
     Smoke,
+    /// Load whisper's CPU kernels the way the first transcription does,
+    /// print the CPU they run on and exit, before logging, the GPU or a
+    /// window. For CI on an emulated older CPU: where the kernels are one
+    /// module per CPU generation, ggml opens every one of them to ask it
+    /// whether it suits, and a module whose loading alone used an
+    /// instruction the CPU lacks would crash here, not at somebody's first
+    /// transcription (#388).
+    WhisperCpu,
 }
 
 /// No arguments preserves the launch screen; a project names its directory.
@@ -33,6 +52,19 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Launch, String>
         Launch::Version
     } else if option == "--smoke" {
         Launch::Smoke
+    } else if option == "--software" {
+        Launch::Software
+    } else if option == "--whisper-cpu" {
+        Launch::WhisperCpu
+    } else if option == "--mcp" {
+        match args.next() {
+            None => Launch::Mcp(None),
+            Some(word) => Launch::Mcp(Some(
+                word.to_str()
+                    .and_then(concat_mcp::Mode::parse)
+                    .ok_or_else(|| format!("--mcp takes auto, window or headless\n{USAGE}"))?,
+            )),
+        }
     } else if option == "--project" {
         let path = args
             .next()
@@ -73,11 +105,39 @@ mod tests {
     fn version_and_smoke_take_no_arguments() {
         assert_eq!(parse_strs(&["--version"]).unwrap(), Launch::Version);
         assert_eq!(parse_strs(&["--smoke"]).unwrap(), Launch::Smoke);
+        assert_eq!(parse_strs(&["--software"]).unwrap(), Launch::Software);
+        assert_eq!(parse_strs(&["--whisper-cpu"]).unwrap(), Launch::WhisperCpu);
         for args in [
             vec!["--version", "--smoke"],
+            vec!["--whisper-cpu", "--version"],
             vec!["--smoke", "--project", "one"],
             vec!["--version", "extra"],
             vec!["--project", "one", "--smoke"],
+        ] {
+            assert!(parse_strs(&args).is_err(), "{args:?}");
+        }
+    }
+
+    #[test]
+    fn mcp_takes_an_optional_mode_and_nothing_else() {
+        use concat_mcp::Mode;
+        assert_eq!(parse_strs(&["--mcp"]).unwrap(), Launch::Mcp(None));
+        assert_eq!(
+            parse_strs(&["--mcp", "headless"]).unwrap(),
+            Launch::Mcp(Some(Mode::Headless))
+        );
+        assert_eq!(
+            parse_strs(&["--mcp", "window"]).unwrap(),
+            Launch::Mcp(Some(Mode::Window))
+        );
+        assert_eq!(
+            parse_strs(&["--mcp", "auto"]).unwrap(),
+            Launch::Mcp(Some(Mode::Auto))
+        );
+        for args in [
+            vec!["--mcp", "sometimes"],
+            vec!["--mcp", "headless", "extra"],
+            vec!["--mcp", "--project"],
         ] {
             assert!(parse_strs(&args).is_err(), "{args:?}");
         }

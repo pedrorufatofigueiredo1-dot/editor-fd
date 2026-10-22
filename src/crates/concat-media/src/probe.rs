@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// SPDX-FileCopyrightText: 2026 Jareer and Concat contributors
+// SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
 
 //! Asking libavformat what is inside a file.
 
@@ -90,7 +90,9 @@ impl MediaInfo {
 pub fn probe(path: impl AsRef<Path>) -> Result<MediaInfo> {
     ffi::init();
     let path = path.as_ref();
-    let input = ffmpeg::format::input(path).map_err(|error| ffi::fail("open", path, error))?;
+    // An SVG is probed as its drawing, and described as itself; see svg.rs.
+    let drawn = crate::svg::readable(path)?;
+    let input = ffmpeg::format::input(&drawn).map_err(|error| ffi::fail("open", path, error))?;
 
     let duration = input.duration();
     let duration =
@@ -233,7 +235,19 @@ fn pick_rate(average: Option<Rational>, guess: Option<Rational>) -> Option<Ratio
         rate.map(tame)
             .filter(|rate| FrameRate::checked(rate.numerator(), rate.denominator()).is_some())
     };
-    match (usable(&average), usable(&guess)) {
+    // An average the frame arithmetic cannot count in is still the only
+    // statement a variable stream makes about its pace. Rounded to the
+    // closest rate it can count in, it is kept: one screen recording's
+    // average of 764460000/12487247 over 138 seconds came out as
+    // 61219/1000, where taking the base rate instead - its timestamp grid,
+    // 90000/1 - wrote all 8494 frames into a proxy 0.094 seconds long, and
+    // Half and Quarter previews held one frame (#394).
+    let average = usable(&average).or_else(|| {
+        average
+            .and_then(|rate| FrameRate::approximated(rate.as_f64()))
+            .map(|rate| rate.fps())
+    });
+    match (average, usable(&guess)) {
         (Some(average), Some(base)) => {
             let (a, b) = (average.as_f64(), base.as_f64());
             let close = ((a - b) / b).abs() <= 0.02;
@@ -358,6 +372,24 @@ mod tests {
         // A rate already in small terms is left alone.
         let skewed = Rational::new(2700, 89);
         assert_eq!(tame(skewed), skewed);
+    }
+
+    /// A variable-rate recording's average is a fraction whose terms are
+    /// past what a document's rates carry, and the rate beside it in the
+    /// container is the timestamp grid. Keeping the grid gave a 138-second
+    /// screen recording a 90000-fps proxy - 8494 frames in 0.094 seconds -
+    /// and a Half or Quarter preview that held a single frame (#394). The
+    /// average is kept, rounded to the closest rate that fits.
+    #[test]
+    fn a_heavy_average_keeps_its_pace_rather_than_the_timestamp_grid() {
+        let average = Some(Rational::new(764_460_000, 12_487_247));
+        let grid = Some(Rational::from_int(90_000));
+        let picked = pick_rate(average, grid).expect("a rate");
+        assert!(
+            (picked.as_f64() - 61.219_258).abs() < 0.001,
+            "{picked:?} is not the pace the recording was made at"
+        );
+        assert_ne!(picked, Rational::from_int(90_000));
     }
 
     #[test]

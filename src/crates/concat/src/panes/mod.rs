@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// SPDX-FileCopyrightText: 2026 Jareer and Concat contributors
+// SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
 
 //! The window, one pane at a time.
 //!
@@ -16,11 +16,14 @@
 
 pub mod captions;
 pub mod export;
+pub mod glide;
 pub mod media_bin;
 pub mod monitor;
+pub mod pace;
 pub mod project;
 pub mod relink;
 pub mod settings;
+pub mod sounds;
 pub mod speech;
 pub mod start;
 pub mod timeline;
@@ -51,6 +54,8 @@ pub enum Msg {
     Timeline(timeline::TimelineMsg),
     /// To the voiceover take.
     Voiceover(voiceover::VoiceoverMsg),
+    /// To the library's Audio page.
+    Sounds(sounds::SoundsMsg),
 }
 
 /// What a message says in the log: the activity trail of what the person
@@ -185,7 +190,10 @@ pub fn activity(msg: &Msg) -> Option<Activity> {
     let level = match inner.as_str() {
         "Select" | "Band" | "Zoomed" | "ZoomIn" | "ZoomOut" | "ZoomToFit" | "PageChanged"
         | "Restore" | "Reset" | "Opened" | "Closed" | "SnapToggled" | "MagneticToggled"
-        | "UpdatesFetched" => Debug,
+        | "UpdatesFetched"
+        // Every return to the front asks what is missing; only what it
+        // finds - the dialog opening - is worth a line of its own.
+        | "Recheck" => Debug,
         _ => Info,
     };
     Some(Activity {

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// SPDX-FileCopyrightText: 2026 Jareer and Concat contributors
+// SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
 
 //! The engine's services, started once, and the bridge between their
 //! threads and the window's.
@@ -44,12 +44,14 @@ pub struct Host {
     pub titles: concat_host::Titles,
     /// The cutout models, and the masks they find for the project's media.
     pub cutouts: Arc<concat_host::Cutouts>,
+    /// The stabilization analysis, and the camera movement it measures.
+    pub stabilizers: Arc<concat_host::Stabilizers>,
     /// The brush model, and the regions it reads under smart strokes.
     pub brushes: Arc<concat_host::Brushes>,
     /// The restoration model, and the enhanced copies it writes.
     pub enhancers: Arc<concat_host::Enhancers>,
     pub reversers: Arc<concat_host::Reversers>,
-    /// The Concat API on a socket, while the Remote page has it on. Its
+    /// The Concat API on a socket, while the Automation page has it on. Its
     /// own sessions for other projects; the one on screen it edits through
     /// the window (see `remote.rs`), never a second copy of it, which
     /// `open_projects` keeps it from opening. The export slot is shared, so
@@ -70,6 +72,7 @@ impl Host {
         Ok(Host {
             titles: concat_host::Titles::new(&dirs),
             cutouts: Arc::new(concat_host::Cutouts::new(&dirs.data)),
+            stabilizers: Arc::new(concat_host::Stabilizers::new()),
             brushes: Arc::new(concat_host::Brushes::new(&dirs.data)),
             enhancers: Arc::new(concat_host::Enhancers::new(&dirs.data)),
             reversers: Arc::new(concat_host::Reversers::new()),
@@ -424,8 +427,14 @@ pub fn image_of(frame: &concat_core::frame::Frame) -> slint::Image {
     slint::Image::from_rgba8(buffer)
 }
 
-/// The JPEG at `path`, if it can be read, as a Slint image.
+/// The picture at `path`, if it can be read, as a Slint image. A file that
+/// is not there is `None` without a word: Slint prints every load that
+/// fails, and a cached picture not drawn yet is the expected case, not a
+/// fault.
 pub fn image_at(path: &std::path::Path) -> Option<slint::Image> {
+    if !path.is_file() {
+        return None;
+    }
     slint::Image::load_from_path(path).ok()
 }
 

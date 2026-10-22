@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// SPDX-FileCopyrightText: 2026 Jareer and Concat contributors
+// SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
 
 //! Rendering the session to a file.
 //!
@@ -78,6 +78,7 @@ pub fn request(session: &Session, spec: &ExportSpec, titles: Vec<ExportClip>) ->
         color_range: spec.color_range,
         color_space: session.video().color_space,
         hdr: spec.hdr,
+        effect_time_offset: 0.0,
         clips,
     }
 }

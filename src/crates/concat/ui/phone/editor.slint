@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// SPDX-FileCopyrightText: 2026 Jareer and Concat contributors
+// SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
 
 import { I18n } from "../i18n.slint";
 import { Theme } from "../theme/theme.slint";
@@ -7,19 +7,22 @@ import { Fmt } from "../util.slint";
 import { Glyph, Icon } from "../icons.slint";
 import { Editor } from "../editor.slint";
 import { Lanes } from "../timeline/lanes.slint";
-import { ClipKind } from "../timeline/model.slint";
+import { ClipField, ClipKind, SelectedClipData } from "../timeline/model.slint";
+import { Param, ParamFormat, SwitchRow } from "../inspector/controls.slint";
 import { PreviewPane } from "../workspace/preview-pane.slint";
 import { ContextMenu } from "../primitives/context-menu.slint";
 import {
-    CategoryPillBar, MediaCard, MediaItemData, PresetGrid, ShelfGrid, ShelfSearch,
+    CategoryPillBar, GroupPillBar, MediaCard, MediaItemData, PresetGrid, ShelfGrid, ShelfSearch,
 } from "../workspace/media-pane.slint";
 import {
-    AdjustPanel, AudioPanel, FilterPanel, Library, PresetStack, ProcessorRows, SpeedPanel,
-    VideoPanel,
+    AdjustPanel, AudioPanel, EnhancePanel, FilterPanel, Library, PresetStack, ProcessorRows,
+    SpeedPanel, VideoPanel,
 } from "../inspector/clip-inspector.slint";
 import { TextPanel } from "../inspector/text-panel.slint";
 import { RoundButton, ToolItem, ToolStrip } from "controls.slint";
 import { PhoneSheet } from "sheet.slint";
+import { PhoneCanvas } from "canvas.slint";
+import { Sounds, SoundList, VoiceList } from "../workspace/audio-page.slint";
 
 // The editor as a phone shows it: one screen, held upright, driven by a
 // finger. Shown in place of the title strip and the dock wherever the
@@ -32,11 +35,14 @@ import { PhoneSheet } from "sheet.slint";
 //
 //   - a bar with the way out, the project's name, Settings and Export;
 //   - the monitor, which takes whatever height the rest leaves;
-//   - the transport: where the playhead is, Play, undo and redo;
+//   - the transport: where the playhead is, a frame back, Play, a frame
+//     on, undo and redo;
 //   - the lanes, with the playhead held at their middle and the cut
-//     sliding under it - a drag scrubs, a tap on a clip selects it, a
-//     tap on empty lane lets go, a clip dragged moves (see `finger` in
-//     lanes.slint, and `centred` in the timeline pane on the Rust side);
+//     sliding under it - a drag scrubs and a throw glides on, two fingers
+//     pinch the zoom, a tap on a clip selects it where it is, a tap on
+//     empty lane lets go, a clip dragged moves (see `finger` in
+//     lanes.slint, `centred` in the timeline pane on the Rust side, and
+//     the glide beside it);
 //   - the bar of tools. With nothing selected it is the library's pages
 //     and the project's verbs; with a clip selected it is the clip's
 //     verbs, with a way back at its head.
@@ -136,6 +142,134 @@ component SheetNote inherits Text {
     wrap: word-wrap;
 }
 
+/// The phone's Mask: the shapes as a row of tiles to thumb along, the way
+/// every phone editor lays them out, and under it the numbers a finger
+/// cannot drag on the monitor - the softness, the turn, a rectangle's
+/// corners - and the invert. Where and how big is dragged on the monitor
+/// with the grips the stage draws; the sliders for those are the desk's.
+component PhoneMaskPanel inherits VerticalLayout {
+    in property <SelectedClipData> selected;
+
+    callback set(field: ClipField, value: float);
+    callback commit();
+
+    property <int> mask: root.selected.mask;
+    property <float> feather: root.selected.mask-feather;
+    property <float> turn: root.selected.mask-rotation;
+    property <float> roundness: root.selected.mask-roundness;
+
+    function pick(index: int) {
+        root.set(ClipField.mask-shape, index);
+        root.commit();
+    }
+
+    spacing: 6px;
+
+    ToolStrip {
+        height: 74px;
+        ToolItem {
+            glyph: Glyph.close;
+            label: I18n.t("common.none");
+            current: root.mask < 0;
+            clicked => { root.pick(-1); }
+        }
+        ToolItem {
+            glyph: Glyph.mask-linear;
+            label: I18n.t("mask.linear");
+            current: root.mask == 0;
+            clicked => { root.pick(0); }
+        }
+        ToolItem {
+            glyph: Glyph.mask-mirror;
+            label: I18n.t("mask.mirror");
+            current: root.mask == 1;
+            clicked => { root.pick(1); }
+        }
+        ToolItem {
+            glyph: Glyph.mask-circle;
+            label: I18n.t("mask.circle");
+            current: root.mask == 2;
+            clicked => { root.pick(2); }
+        }
+        ToolItem {
+            glyph: Glyph.mask-rectangle;
+            label: I18n.t("mask.rectangle");
+            current: root.mask == 3;
+            clicked => { root.pick(3); }
+        }
+        ToolItem {
+            glyph: Glyph.mask-heart;
+            label: I18n.t("mask.heart");
+            current: root.mask == 4;
+            clicked => { root.pick(4); }
+        }
+        ToolItem {
+            glyph: Glyph.mask-star;
+            label: I18n.t("mask.star");
+            current: root.mask == 5;
+            clicked => { root.pick(5); }
+        }
+    }
+
+    if root.mask < 0: SheetNote {
+        text: I18n.t("mask.phoneHint");
+    }
+
+    if root.mask >= 0: SheetNote {
+        text: I18n.t("mask.phoneDrag");
+    }
+
+    if root.mask >= 0: SwitchRow {
+        label: I18n.t("mask.invert");
+        checked: root.selected.mask-invert;
+        toggled(on) => { root.set(ClipField.mask-invert, on ? 1 : 0); root.commit(); }
+    }
+
+    if root.mask >= 0: Param {
+        label: I18n.t("clipInspector.feather");
+        keyable: true;
+        field: ClipField.mask-feather;
+        value <=> root.feather;
+        minimum: 0;
+        maximum: 1;
+        step: 0.01;
+        default-value: 0;
+        fmt: ParamFormat.fraction;
+        unit: "%";
+        unit-scale: 100;
+        changed(v) => { root.set(ClipField.mask-feather, v); root.commit(); }
+    }
+
+    if root.mask >= 0: Param {
+        label: I18n.t("common.rotation");
+        keyable: true;
+        field: ClipField.mask-rotation;
+        value <=> root.turn;
+        minimum: -180;
+        maximum: 180;
+        step: 1;
+        default-value: 0;
+        fmt: ParamFormat.degrees;
+        unit: "°";
+        changed(v) => { root.set(ClipField.mask-rotation, v); root.commit(); }
+    }
+
+    if root.mask == 3: Param {
+        label: I18n.t("mask.roundness");
+        keyable: true;
+        field: ClipField.mask-roundness;
+        value <=> root.roundness;
+        minimum: 0;
+        maximum: 1;
+        step: 0.01;
+        default-value: 0;
+        fmt: ParamFormat.fraction;
+        unit: "%";
+        unit-scale: 100;
+        changed(v) => { root.set(ClipField.mask-roundness, v); root.commit(); }
+    }
+}
+
 /// One of the project's facts: the label, then the value against the
 /// trailing edge.
 component Fact inherits HorizontalLayout {
@@ -164,8 +298,8 @@ component Fact inherits HorizontalLayout {
     }
 }
 
-/// A round chip over the lanes: the zoom, since a finger cannot pinch
-/// here - Slint sees one finger at a time.
+/// A round chip over the lanes: the zoom, for a thumb that has no second
+/// finger free to pinch with.
 component LaneChip inherits Rectangle {
     in property <Glyph> glyph;
     in property <string> label;
@@ -204,16 +338,18 @@ export component PhoneEditor inherits Rectangle {
 
     /// Which sheet is up, by name, or empty for none. The names are the
     /// library's pages - "media", "text", "effects", "filters",
-    /// "transitions" - the project's own, and a "clip-" page of the
-    /// inspector for the selected clip.
+    /// "adjustments", "transitions" - the project's own, and a "clip-" page
+    /// of the inspector for the selected clip.
     property <string> sheet;
+    /// The Audio sheet's shelf: 0 my sounds, 1 voices, 2 styles.
+    property <int> audio-shelf;
     /// The sheet up is one of the clip's, and goes with the clip.
     property <bool> sheet-needs-clip;
 
     property <bool> has-clip: Editor.selected-clip.present;
     property <ClipKind> kind: Editor.selected-clip.kind;
-    property <bool> is-video: root.kind == ClipKind.video;
-    property <bool> is-audio: root.kind == ClipKind.audio;
+    property <bool> is-video: !Editor.selected-clip.batch-volume && root.kind == ClipKind.video;
+    property <bool> is-audio: Editor.selected-clip.batch-volume || root.kind == ClipKind.audio;
     property <bool> is-image: root.kind == ClipKind.image;
     property <bool> is-text: root.kind == ClipKind.text;
     property <bool> is-layer: root.kind == ClipKind.filter;
@@ -243,16 +379,22 @@ export component PhoneEditor inherits Rectangle {
 
     pure function sheet-title(name: string) -> string {
         return name == "media" ? I18n.t("common.media")
+            : name == "audio" ? I18n.t("common.audio")
             : name == "text" || name == "clip-text" ? I18n.t("common.text")
             : name == "effects" || name == "clip-effects" ? I18n.t("common.effects")
             : name == "filters" ? I18n.t("mediaPane.filters")
+            : name == "adjustments" ? I18n.t("mediaPane.adjustments")
             : name == "transitions" ? I18n.t("mediaPane.transitions")
             : name == "project" ? I18n.t("phone.project")
+            : name == "canvas" || name == "clip-canvas" ? I18n.t("phone.canvas")
             : name == "clip-video" ? I18n.t("phone.edit")
             : name == "clip-speed" ? I18n.t("common.speed")
             : name == "clip-audio" ? I18n.t("common.audio")
+            : name == "clip-audio-effects" ? I18n.t("configPane.audioEffects")
             : name == "clip-adjust" ? I18n.t("common.adjust")
+            : name == "clip-enhance" ? I18n.t("common.enhance")
             : name == "clip-layer" ? I18n.t("configPane.filter")
+            : name == "clip-mask" ? I18n.t("mask.title")
             : "";
     }
 
@@ -331,7 +473,7 @@ export component PhoneEditor inherits Rectangle {
                 Rectangle {
                     width: export-label.preferred-width + export-icon.width + 32px;
                     height: 36px;
-                    border-radius: 18px;
+                    border-radius: Theme.r;
                     background: export-touch.pressed ? Theme.accent-hover : Theme.accent;
 
                     animate background { duration: 100ms; easing: cubic-bezier(0.4, 0, 0.2, 1); }
@@ -424,8 +566,18 @@ export component PhoneEditor inherits Rectangle {
     //
     // Where the playhead is on the leading edge, the view's way back
     // and the history's two steps on the trailing one, and Play in the
-    // middle of the row - placed against the whole row rather than laid
-    // out, so it stays under the thumb whatever the timecode's width.
+    // middle of the row with a frame back and a frame on either side of
+    // it - placed against the whole row rather than laid out, so they
+    // stay under the thumb whatever the timecode's width. Measured for a
+    // 360px screen, the narrowest phone in common use: the middle three
+    // and the trailing three meet with a few pixels to spare.
+    //
+    // The frame steps are for the cut a drag cannot land on: a finger
+    // lifting off the glass nudges the lanes a little, and a frame is a
+    // pixel or less at most zooms (#244). Held, they keep stepping.
+    property <int> frames: Math.round(Math.max(0, Editor.playhead) * Editor.frame-rate);
+    property <int> rate: Math.max(1, Math.round(Editor.frame-rate));
+
     Rectangle {
         x: 0;
         y: root.transport-y;
@@ -434,17 +586,29 @@ export component PhoneEditor inherits Rectangle {
 
         HorizontalLayout {
             padding-left: 16px;
-            padding-right: 8px;
-            spacing: 2px;
+            padding-right: 4px;
+            spacing: 0px;
 
-            Text {
+            // The playhead to the frame, since the buttons step by one,
+            // over the length of the cut.
+            VerticalLayout {
                 horizontal-stretch: 1;
-                text: Fmt.short-duration(Editor.playhead)
-                    + " / " + Fmt.short-duration(Editor.preview-duration);
-                color: Theme.fg;
-                font-family: Theme.font-technical;
-                font-size: Theme.fs-lg;
-                vertical-alignment: center;
+                alignment: center;
+                spacing: 1px;
+
+                Text {
+                    text: Fmt.short-duration(Math.floor(root.frames / root.rate))
+                        + ":" + Fmt.pad2(Math.mod(root.frames, root.rate));
+                    color: Theme.fg;
+                    font-family: Theme.font-technical;
+                    font-size: Theme.fs-lg;
+                }
+                Text {
+                    text: Fmt.short-duration(Editor.preview-duration);
+                    color: Theme.fg-dim;
+                    font-family: Theme.font-technical;
+                    font-size: Theme.fs-xs;
+                }
             }
 
             VerticalLayout {
@@ -452,7 +616,7 @@ export component PhoneEditor inherits Rectangle {
                 RoundButton {
                     glyph: Glyph.fit;
                     label: I18n.t("previewPane.fitFramePane");
-                    size: 40px;
+                    size: 36px;
                     icon-size: 16px;
                     clicked => { monitor.fit-view(); }
                 }
@@ -463,7 +627,7 @@ export component PhoneEditor inherits Rectangle {
                     glyph: Glyph.undo;
                     label: I18n.t("phone.undo");
                     enabled: Editor.can-undo;
-                    size: 40px;
+                    size: 36px;
                     icon-size: 17px;
                     clicked => { Editor.undo(); }
                 }
@@ -474,16 +638,28 @@ export component PhoneEditor inherits Rectangle {
                     glyph: Glyph.redo;
                     label: I18n.t("phone.redo");
                     enabled: Editor.can-redo;
-                    size: 40px;
+                    size: 36px;
                     icon-size: 17px;
                     clicked => { Editor.redo(); }
                 }
             }
         }
 
+        RoundButton {
+            x: play.x - self.width - 2px;
+            y: (parent.height - self.height) / 2;
+            size: 36px;
+            icon-size: 16px;
+            repeats: true;
+            enabled: root.frames > 0;
+            glyph: Glyph.step-back;
+            label: I18n.t("previewPane.previousFrame");
+            clicked => { Editor.step-frames(-1); }
+        }
+
         // The same size as its neighbours, and ten pixels of air above and
         // below: the fill is what makes it the one to reach for, not bulk.
-        RoundButton {
+        play := RoundButton {
             x: (parent.width - self.width) / 2;
             y: (parent.height - self.height) / 2;
             size: 40px;
@@ -492,6 +668,17 @@ export component PhoneEditor inherits Rectangle {
             glyph: Editor.playing ? Glyph.pause : Glyph.play;
             label: Editor.playing ? I18n.t("previewPane.pause") : I18n.t("previewPane.play");
             clicked => { Editor.play-toggled(); }
+        }
+
+        RoundButton {
+            x: play.x + play.width + 2px;
+            y: (parent.height - self.height) / 2;
+            size: 36px;
+            icon-size: 16px;
+            repeats: true;
+            glyph: Glyph.step-forward;
+            label: I18n.t("previewPane.nextFrame");
+            clicked => { Editor.step-frames(1); }
         }
     }
 
@@ -558,7 +745,10 @@ export component PhoneEditor inherits Rectangle {
                     Editor.blur();
                     Editor.scrubbed(seconds);
                 }
+                finger-held => { Editor.finger-held(); }
+                finger-lifted => { Editor.finger-lifted(); }
                 key-mark-moved(from, to) => { Editor.key-mark-moved(from, to); }
+                key-mark-opened => { Editor.key-mark-opened(); }
                 hovered(seconds) => { Editor.hovered(seconds); }
                 hover-ended => { Editor.hover-ended(); }
                 floor-pressed => { Editor.blur(); }
@@ -654,6 +844,13 @@ export component PhoneEditor inherits Rectangle {
                 current: root.sheet == "media";
                 clicked => { root.show("media", false); }
             }
+            // Beside Media, as CapCut keeps it: the user's own sounds.
+            ToolItem {
+                glyph: Glyph.music;
+                label: I18n.t("common.audio");
+                current: root.sheet == "audio";
+                clicked => { root.show("audio", false); }
+            }
             ToolItem {
                 glyph: Glyph.text-mark;
                 label: I18n.t("common.text");
@@ -672,6 +869,14 @@ export component PhoneEditor inherits Rectangle {
                 current: root.sheet == "filters";
                 clicked => { root.show("filters", false); }
             }
+            // CapCut's Adjust, beside Filters: a layer that grades the
+            // whole picture beneath it, and the user's LUTs.
+            ToolItem {
+                glyph: Glyph.sun;
+                label: I18n.t("mediaPane.adjustments");
+                current: root.sheet == "adjustments";
+                clicked => { root.show("adjustments", false); }
+            }
             ToolItem {
                 glyph: Glyph.transition;
                 label: I18n.t("mediaPane.transitions");
@@ -687,6 +892,25 @@ export component PhoneEditor inherits Rectangle {
                 glyph: Glyph.volume;
                 label: I18n.t("phone.speak");
                 clicked => { Editor.speak(); }
+            }
+            // The voiceover panel, which stands at the foot of the screen
+            // over this bar; the same press puts it away, or stops a take.
+            ToolItem {
+                glyph: Glyph.mic;
+                label: I18n.t("phone.voiceover");
+                current: Editor.recording;
+                clicked => {
+                    root.hide();
+                    Editor.record-voiceover();
+                }
+            }
+            // What fills a tall frame beside a wide shot, for the whole
+            // timeline: CapCut's Canvas, where a phone editor keeps it.
+            ToolItem {
+                glyph: Glyph.frame;
+                label: I18n.t("phone.canvas");
+                current: root.sheet == "canvas";
+                clicked => { root.show("canvas", false); }
             }
             ToolItem {
                 glyph: Glyph.info;
@@ -731,6 +955,13 @@ export component PhoneEditor inherits Rectangle {
                 current: root.sheet == "clip-video";
                 clicked => { root.show("clip-video", true); }
             }
+            // The clip's own Canvas: Fit and Fill, and its background.
+            if root.is-picture: ToolItem {
+                glyph: Glyph.frame;
+                label: I18n.t("phone.canvas");
+                current: root.sheet == "clip-canvas";
+                clicked => { root.show("clip-canvas", true); }
+            }
             if root.is-text: ToolItem {
                 glyph: Glyph.text-mark;
                 label: I18n.t("common.text");
@@ -743,7 +974,21 @@ export component PhoneEditor inherits Rectangle {
                 current: root.sheet == "clip-layer";
                 clicked => { root.show("clip-layer", true); }
             }
-            if root.is-video || root.is-audio: ToolItem {
+            // An adjustment layer is graded as a clip is: the same colour
+            // sheet, and its chain, for everything beneath it.
+            if root.is-layer: ToolItem {
+                glyph: Glyph.sun;
+                label: I18n.t("common.adjust");
+                current: root.sheet == "clip-adjust";
+                clicked => { root.show("clip-adjust", true); }
+            }
+            if root.is-layer: ToolItem {
+                glyph: Glyph.sparkle;
+                label: I18n.t("common.effects");
+                current: root.sheet == "clip-effects";
+                clicked => { root.show("clip-effects", true); }
+            }
+            if (root.is-video || root.is-audio) && !Editor.selected-clip.batch-volume: ToolItem {
                 glyph: Glyph.clock;
                 label: I18n.t("common.speed");
                 current: root.sheet == "clip-speed";
@@ -755,11 +1000,34 @@ export component PhoneEditor inherits Rectangle {
                 current: root.sheet == "clip-audio";
                 clicked => { root.show("clip-audio", true); }
             }
+            // The desk's Audio › Audio effects: the sound's chain and its
+            // library on a sheet of their own, not under the level.
+            if (root.is-video || root.is-audio) && !Editor.selected-clip.batch-volume: ToolItem {
+                glyph: Glyph.waveform;
+                label: I18n.t("configPane.audioEffects");
+                current: root.sheet == "clip-audio-effects";
+                clicked => { root.show("clip-audio-effects", true); }
+            }
+            // CapCut's Mask, on a sheet of its own.
+            if root.is-picture: ToolItem {
+                glyph: Glyph.mask-circle;
+                label: I18n.t("mask.title");
+                current: root.sheet == "clip-mask";
+                clicked => { root.show("clip-mask", true); }
+            }
             if root.is-picture: ToolItem {
                 glyph: Glyph.sun;
                 label: I18n.t("common.adjust");
                 current: root.sheet == "clip-adjust";
                 clicked => { root.show("clip-adjust", true); }
+            }
+            // The desk's Video > Enhance, on a sheet of its own: the same
+            // panel, settings, preview and all.
+            if root.is-picture: ToolItem {
+                glyph: Glyph.maximize;
+                label: I18n.t("common.enhance");
+                current: root.sheet == "clip-enhance";
+                clicked => { root.show("clip-enhance", true); }
             }
             if root.is-picture || root.is-text: ToolItem {
                 glyph: Glyph.sparkle;
@@ -863,6 +1131,57 @@ export component PhoneEditor inherits Rectangle {
                     Editor.media-activate(id);
                     root.hide();
                 }
+            }
+        }
+
+        // ── the user's own sounds: brought in from the phone's files,
+        // played with a tap, laid at the playhead with the plus ──
+        if root.sheet == "audio": VerticalLayout {
+            padding: 12px;
+            spacing: 12px;
+
+            // Three shelves, as chips across the top: the user's sounds,
+            // the voices, the styles.
+            HorizontalLayout {
+                spacing: 6px;
+                alignment: start;
+                for shelf[index] in [I18n.t("sounds.mine"), I18n.t("voices.voices"), I18n.t("voices.styles")]: Rectangle {
+                    height: 32px;
+                    width: chip-text.preferred-width + 28px;
+                    border-radius: 16px;
+                    background: root.audio-shelf == index ? Theme.accent : Theme.field;
+                    chip-text := Text {
+                        text: shelf;
+                        color: root.audio-shelf == index ? Theme.on-accent : Theme.fg-muted;
+                        font-size: Theme.fs;
+                        vertical-alignment: center;
+                        horizontal-alignment: center;
+                    }
+                    TouchArea { clicked => { root.audio-shelf = index; } }
+                }
+            }
+
+            if root.audio-shelf > 0: VoiceList {
+                styles: root.audio-shelf == 2;
+                touch-sized: true;
+                opened => { root.hide(); }
+            }
+
+            if root.audio-shelf == 0: SheetButton {
+                glyph: Glyph.import;
+                primary: true;
+                enabled: !Sounds.importing;
+                label: Sounds.importing ? I18n.t("mediaPane.importing") : I18n.t("sounds.importSounds");
+                clicked => { Sounds.import(); }
+            }
+            if root.audio-shelf == 0: SheetNote {
+                text: Sounds.mine.length == 0
+                    ? I18n.t("sounds.noSoundsYet") : I18n.t("sounds.mineHintPhone");
+            }
+            if root.audio-shelf == 0: SoundList {
+                items: Sounds.mine;
+                touch-sized: true;
+                added => { root.hide(); }
             }
         }
 
@@ -984,11 +1303,52 @@ export component PhoneEditor inherits Rectangle {
                 shelf: 0;
                 placeholder: I18n.t1("common.searchKind", I18n.t("mediaPane.filter"));
             }
+            GroupPillBar {
+                shelf: 0;
+                groups: Editor.filter-groups;
+            }
             ShelfGrid {
                 entries: Editor.catalogue-filters;
                 auditions: false;
                 applied(id, label) => {
                     Editor.library-apply-filter(id, label);
+                    root.hide();
+                }
+            }
+        }
+
+        // ── adjustments: a layer that grades everything beneath it, and
+        // the user's LUTs - imported from the phone's files, put down as
+        // a layer at the playhead ──
+        if root.sheet == "adjustments": VerticalLayout {
+            padding: 12px;
+            spacing: 12px;
+
+            SheetButton {
+                glyph: Glyph.plus;
+                primary: true;
+                label: I18n.t("mediaPane.addAdjustmentLayer");
+                clicked => {
+                    Editor.library-add-adjustment(I18n.t("mediaPane.adjustment"));
+                    root.hide();
+                }
+            }
+            SheetNote { text: I18n.t("mediaPane.adjustmentLayerHint"); }
+            SheetNote { text: I18n.t("mediaPane.luts"); }
+            SheetButton {
+                glyph: Glyph.import;
+                label: I18n.t("mediaPane.importALut");
+                clicked => { Editor.library-import-lut(); }
+            }
+            if Editor.catalogue-luts.length == 0: SheetNote {
+                text: I18n.t("mediaPane.noLutsYet");
+            }
+            ShelfGrid {
+                entries: Editor.catalogue-luts;
+                glyph: Glyph.sun;
+                auditions: false;
+                applied(id, label) => {
+                    Editor.library-apply-lut(id, label);
                     root.hide();
                 }
             }
@@ -1004,6 +1364,10 @@ export component PhoneEditor inherits Rectangle {
                 shelf: 3;
                 placeholder: I18n.t1("common.searchKind", I18n.t("mediaPane.transition"));
             }
+            GroupPillBar {
+                shelf: 3;
+                groups: Editor.transition-groups;
+            }
             ShelfGrid {
                 entries: Editor.catalogue-transitions;
                 glyph: Glyph.transition;
@@ -1013,7 +1377,20 @@ export component PhoneEditor inherits Rectangle {
         }
 
         // ── the inspector's pages ──
+        if root.sheet == "canvas": PhoneCanvas { own: false; }
+        if root.sheet == "clip-canvas": PhoneCanvas { own: true; }
+
+        if root.sheet == "clip-mask": PhoneMaskPanel {
+            selected: Editor.selected-clip;
+            set(field, value) => { Editor.clip-set(field, value); }
+            commit => { Editor.clip-commit(); }
+        }
+
         if root.sheet == "clip-video": VideoPanel {
+            // Fit, Fill and the background have the Canvas sheet here, and
+            // the mask its own tool and sheet.
+            canvas: false;
+            mask-section: false;
             selected: Editor.selected-clip;
             applied: Editor.applied-visual;
             params: Editor.visual-params;
@@ -1052,7 +1429,7 @@ export component PhoneEditor inherits Rectangle {
                 set(field, value) => { Editor.clip-set(field, value); }
                 commit => { Editor.clip-commit(); }
             }
-            ProcessorRows {
+            if !Editor.selected-clip.batch-volume: ProcessorRows {
                 applied: Editor.applied-audio;
                 params: Editor.audio-params;
                 add(id) => { Editor.chain-add(true, id); }
@@ -1062,7 +1439,10 @@ export component PhoneEditor inherits Rectangle {
                 }
                 commit => { Editor.clip-commit(); }
             }
-            PresetStack {
+        }
+
+        if root.sheet == "clip-audio-effects": VerticalLayout {
+            if !Editor.selected-clip.batch-volume: PresetStack {
                 noun: I18n.t("common.audioEffect");
                 library-title: I18n.t("configPane.audioEffects");
                 shelf: 2;
@@ -1091,6 +1471,15 @@ export component PhoneEditor inherits Rectangle {
             curve-point(key, point, x, y) => { Editor.curve-point(-1, key, point, x, y); }
             curve-remove(key, point) => { Editor.curve-remove(-1, key, point); }
             commit => { Editor.clip-commit(); }
+        }
+
+        if root.sheet == "clip-enhance": EnhancePanel {
+            selected: Editor.selected-clip;
+            enhance-set(on) => { Editor.clip-enhance-set(on); }
+            enhance-size(index) => { Editor.clip-enhance-size(index); }
+            enhance-strength(strength) => { Editor.clip-enhance-strength(strength); }
+            enhance-preview => { Editor.clip-enhance-preview(); }
+            enhance-run => { Editor.clip-enhance-run(); }
         }
 
         if root.sheet == "clip-text": TextPanel {
@@ -1124,6 +1513,7 @@ export component PhoneEditor inherits Rectangle {
             Fact { label: I18n.t("common.media"); value: "\{Editor.count-media}"; }
             Fact { label: I18n.t("configPane.tracks"); value: "\{Editor.count-tracks}"; }
             Fact { label: I18n.t("configPane.clips"); value: "\{Editor.count-clips}"; }
+
 
             Rectangle { height: 16px; }
 

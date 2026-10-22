@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// SPDX-FileCopyrightText: 2026 Jareer and Concat contributors
+// SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
 
 //! Finding the masks a cutout is made of.
 //!
@@ -33,7 +33,7 @@ use concat_project::model::{MediaKind, Project, Subject};
 use concat_vision::segment::Kind;
 use concat_vision::{MASK_RATE, MaskStore, ModelId, Segmenter, mask_dir, models};
 
-use crate::jobs::SingleFlight;
+use crate::jobs::{SingleFlight, Tripwire};
 
 /// What one analysis covers.
 #[derive(Clone, Debug)]
@@ -198,6 +198,17 @@ impl Cutouts {
         wanted
     }
 
+    /// Where `request`'s masks are kept.
+    fn dir(request: &AnalyseRequest) -> PathBuf {
+        mask_dir(&request.project, &request.media_path, request.subject)
+    }
+
+    /// Whether the app died analysing `request` last time, so it is not to
+    /// be analysed again by itself. See [`Tripwire`].
+    pub fn tripped(request: &AnalyseRequest) -> bool {
+        Tripwire::tripped(&Self::dir(request))
+    }
+
     /// How many instants `request` still needs, without doing anything.
     /// A store made by a model the subject would not pick now needs all
     /// of them again.
@@ -240,6 +251,7 @@ impl Cutouts {
         if Self::outstanding(request) == usize::MAX {
             store.clear();
         }
+        let _wire = Tripwire::arm(&Self::dir(request));
 
         // The model the subject names, or for automatic the one the
         // store already records; the first frame decides otherwise.
@@ -374,12 +386,16 @@ impl Cutouts {
 /// [`crate::models`]. Whichever answers, the bytes are checked against the
 /// digest the table carries before anything is renamed into place, so a
 /// truncated or substituted file never becomes an installed model.
+///
+/// Nothing is fetched for a runtime that cannot run it: an Intel Mac older
+/// than its ONNX Runtime is told so here, before the download.
 pub(crate) fn fetch(
     id: ModelId,
     file: &Path,
     cancel: &AtomicBool,
     progress: &mut dyn FnMut(Progress),
 ) -> Result<(), String> {
+    concat_vision::runtime::ready()?;
     let spec = id.spec();
     if let Some(parent) = file.parent() {
         std::fs::create_dir_all(parent)

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// SPDX-FileCopyrightText: 2026 Jareer and Concat contributors
+// SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
 
 //! The speech sheet: a title's words, or any words, read aloud.
 //!
@@ -20,13 +20,17 @@
 //! than the few every model shares, which is why the pane carries every
 //! dial and the family says which are read.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use concat_host::media::{self, MediaSummary};
+use concat_host::voices::{self, SavedVoice};
 use concat_project::Command;
-use concat_project::model::{ClipKind, MediaItem, MediaOrigin};
+use concat_project::commands::ClipPatch;
+use concat_project::model::{AppliedFilter, ClipKind, MediaItem, MediaOrigin};
+use concat_speech::JobStage;
 use concat_speech::tts::{
-    CHATTERBOX_CLONE, Family, POCKET_CLONE, Reference, VoiceInfo, family_of, is_clone,
+    CHATTERBOX_CLONE, Family, POCKET_CLONE, Reference, VoiceInfo, family_of, is_clone, voice_family,
 };
 use slint::SharedString;
 
@@ -35,6 +39,7 @@ use crate::host::{on_ui_in_project, spawn_in_project};
 use crate::i18n::{t, tf};
 use crate::panes::Msg;
 use crate::panes::captions::CHARS_PER_SECOND;
+use crate::panes::pace::{Pace, Stage, Timings};
 use crate::panes::settings::installed;
 use crate::studio::Studio;
 use crate::ui::SpeechSheetData;
@@ -54,11 +59,85 @@ const STEPS: [i32; 3] = [3, 5, 8];
 /// The breath between sentences the sheet opens on: sherpa's own.
 const DEFAULT_PAUSES: f32 = 0.2;
 
+/// A style a voice can be read in: a few of the audio effects Concat ships,
+/// laid on the speech clip once it lands, where they stay as ordinary
+/// effects to change or take off. Original looks of the effects alone -
+/// no one's voice, no character's name. The Audio page's card carries
+/// its row; `name` names it in the interface's language, through a
+/// literal `t` so scripts/locales.py finds the key.
+pub struct VoiceStyle {
+    pub name: fn() -> String,
+    pub effects: &'static [&'static str],
+}
+
+/// The Audio page's Voices › Styles shelf, in its order.
+pub const STYLES: [VoiceStyle; 6] = [
+    VoiceStyle {
+        name: || t("voices.styleChipmunk"),
+        effects: &["concat.chipmunk"],
+    },
+    VoiceStyle {
+        name: || t("voices.styleRobot"),
+        effects: &["concat.robot"],
+    },
+    VoiceStyle {
+        name: || t("voices.styleTelephone"),
+        effects: &["concat.telephone"],
+    },
+    VoiceStyle {
+        name: || t("voices.styleMegaphone"),
+        effects: &["concat.megaphone"],
+    },
+    VoiceStyle {
+        name: || t("voices.styleRadio"),
+        effects: &["concat.radio"],
+    },
+    VoiceStyle {
+        name: || t("voices.styleGiant"),
+        effects: &["concat.deep", "concat.hall"],
+    },
+];
+
+/// What the Audio page's Voices shelf opens the sheet on.
+#[derive(Clone, Debug)]
+pub enum VoiceChoice {
+    /// A voice a model names, by its id.
+    Builtin(i32),
+    /// A saved clone, by its id.
+    Saved(String),
+    /// A style, by its row of [`STYLES`].
+    Style(usize),
+}
+
+/// Seconds a model takes to read one second of speech, before a read with
+/// it has been timed: about what each took on a recent CPU.
+fn reading_pace(family: Family) -> f32 {
+    match family {
+        Family::Kokoro => 0.35,
+        Family::Pocket => 0.3,
+        Family::Chatterbox => 1.6,
+    }
+}
+
 /// Everything that can happen to the speech sheet.
 #[derive(Clone, Debug)]
 pub enum SpeechMsg {
     /// The tray's Speak tool, or the menu.
     Open,
+    /// The Audio page's Voices shelf: the sheet with that voice or style.
+    OpenWith(VoiceChoice),
+    /// The name a sample is to be saved under, typed.
+    SaveNameEdited(String),
+    /// A picture for the voice being saved, from the system's picker.
+    PicturePicked(PathBuf),
+    /// Keep the sample being read in as a voice of the user's own.
+    SaveVoice,
+    /// The save's worker is done.
+    VoiceSaved(Box<Result<SavedVoice, String>>),
+    /// A saved voice deleted, by its id.
+    ForgetVoice(String),
+    /// The style taken off: the speech lands plain.
+    ClearStyle,
     Close,
     TextEdited(String),
     VoiceChanged(i32),
@@ -79,7 +158,7 @@ pub enum SpeechMsg {
     Begin,
     Cancel,
     /// The synthesiser's worker reporting where it is, `0..=1`.
-    Progress(f32),
+    Progress(JobStage),
     /// The synthesiser's worker is done: the file it wrote, probed, or
     /// why not.
     Finished(Box<Result<MediaSummary, String>>),
@@ -116,12 +195,34 @@ pub struct SpeechPane {
     /// a recording is not always where the speaking is.
     pub reference_start: f64,
     pub running: bool,
-    pub progress: f32,
+    /// How far the running read looks.
+    pub pace: Pace,
+    /// The model and the length of the running read: what its timing is
+    /// kept by.
+    reading: Option<(String, f32)>,
+    /// How long each model took this session, for the next read's bar.
+    timings: Timings,
     pub message: String,
     /// Where the running read will land on the timeline, in seconds.
     landing: f64,
     /// Who can speak, from the voice model on disk.
     pub speakers: Vec<VoiceInfo>,
+    /// The voices the user saved, newest first: rows of the voice list
+    /// for a model that reads in a recording. See `concat_host::voices`.
+    pub saved: Vec<SavedVoice>,
+    /// The saved voice being read in, by its row of `saved`, in place of
+    /// a named one.
+    pub saved_voice: Option<usize>,
+    /// The style the speech lands in: a row of [`STYLES`].
+    pub style: Option<usize>,
+    /// What the sample is to be saved as, and with which picture.
+    pub save_name: String,
+    pub save_picture: Option<PathBuf>,
+    /// A save running.
+    pub saving: bool,
+    /// Each saved voice's picture, read once, by its id: the rows are
+    /// published on every frame of playback.
+    pictures: std::cell::RefCell<std::collections::HashMap<String, slint::Image>>,
 }
 
 impl SpeechPane {
@@ -129,6 +230,9 @@ impl SpeechPane {
     /// this runs the studio's copy of the pane is a blank it must not read.
     pub fn update(&mut self, msg: SpeechMsg, studio: &mut Studio) {
         match msg {
+            // A reading in progress is shown as it is when the panel is
+            // asked for again: closing it never stopped the reading.
+            SpeechMsg::Open if self.running => self.open = true,
             SpeechMsg::Open => {
                 let title = studio
                     .sole_selection()
@@ -157,6 +261,9 @@ impl SpeechPane {
                     sample: 0,
                     reference_start: 0.0,
                     speakers: std::mem::take(&mut self.speakers),
+                    timings: std::mem::take(&mut self.timings),
+                    saved: std::mem::take(&mut self.saved),
+                    pictures: std::mem::take(&mut self.pictures),
                     ..SpeechPane::default()
                 };
                 // The voice chosen last time, if the model reads with it;
@@ -166,9 +273,67 @@ impl SpeechPane {
                 self.voice = self.voice_row(wanted);
                 self.sample = self.default_sample(studio);
             }
+            SpeechMsg::OpenWith(choice) => {
+                if !self.running {
+                    self.update(SpeechMsg::Open, studio);
+                    self.choose(choice, studio);
+                } else {
+                    self.open = true;
+                }
+            }
+            SpeechMsg::SaveNameEdited(name) => self.save_name = name,
+            SpeechMsg::PicturePicked(path) => self.save_picture = Some(path),
+            SpeechMsg::SaveVoice => self.save_voice(studio),
+            SpeechMsg::VoiceSaved(result) => {
+                self.saving = false;
+                match *result {
+                    Ok(voice) => {
+                        self.reload_saved(studio);
+                        // Read in it from here on: it is the voice that
+                        // was being read in, now under its name.
+                        self.saved_voice = self.saved.iter().position(|held| held.id == voice.id);
+                        if self.saved_voice.is_some() {
+                            self.use_sample = false;
+                        }
+                        self.save_name.clear();
+                        self.save_picture = None;
+                        studio.notify(&tf("voices.saved", &[&voice.name]), false);
+                    }
+                    Err(error) => self.message = error,
+                }
+            }
+            SpeechMsg::ForgetVoice(id) => {
+                let Some(voice) = self.saved.iter().find(|voice| voice.id == id).cloned() else {
+                    return;
+                };
+                match voices::remove(&voice) {
+                    Ok(()) => {
+                        self.saved_voice = None;
+                        self.reload_saved(studio);
+                        studio.notify(&tf("voices.removed", &[&voice.name]), false);
+                    }
+                    Err(error) => studio.notify(&error, true),
+                }
+            }
+            SpeechMsg::ClearStyle => self.style = None,
             SpeechMsg::Close => self.open = false,
             SpeechMsg::TextEdited(text) => self.text = text,
-            SpeechMsg::VoiceChanged(index) => self.voice = index.max(0) as usize,
+            // The row past the named voices is "Clone from a sample…":
+            // the sample switch, turned on from where a voice is chosen.
+            // Past them, the saved voices, for a model that reads in one.
+            SpeechMsg::VoiceChanged(index) => {
+                let index = index.max(0) as usize;
+                let named = self.offered().len();
+                let saved = self.saved_offered();
+                if index < named {
+                    self.voice = index;
+                    self.saved_voice = None;
+                } else if index < named + saved {
+                    self.saved_voice = Some(index - named);
+                } else if self.sample_voice().is_some() {
+                    self.use_sample = true;
+                }
+            }
             SpeechMsg::ModelChanged(index) => {
                 self.model = index.max(0) as usize;
                 // Another model may read with other voices: the list is
@@ -179,6 +344,9 @@ impl SpeechPane {
                     .map(|model| family_of(&model.id))
                     .unwrap_or(Family::Kokoro);
                 self.voice = self.voice_row(chosen);
+                if self.sample_voice().is_none() {
+                    self.saved_voice = None;
+                }
             }
             SpeechMsg::SpeedChanged(speed) => {
                 self.speed = if speed.is_finite() {
@@ -215,9 +383,12 @@ impl SpeechPane {
                 self.running = false;
                 self.open = false;
             }
-            SpeechMsg::Progress(fraction) => self.progress = fraction.clamp(0.0, 1.0),
+            SpeechMsg::Progress(stage) => self.pace.report(stage),
             SpeechMsg::Finished(result) => {
                 self.running = false;
+                if let (Ok(_), Some((model, chars))) = (result.as_ref(), self.reading.take()) {
+                    self.timings.keep(&model, self.pace.learned(chars));
+                }
                 match *result {
                     Ok(summary) => {
                         // Marked as read aloud: the bin shelves it under
@@ -235,16 +406,42 @@ impl SpeechPane {
                         });
                         self.open = false;
                         if let Some(media_id) = media_id {
-                            studio.apply(Command::AddClipAtFirstFree {
+                            let clip = studio.apply(Command::AddClipAtFirstFree {
                                 media_id,
                                 start: self.landing,
                             });
+                            // In a style: its effects on the clip, as the
+                            // library would put them there.
+                            if let (Some(clip_id), Some(style)) =
+                                (clip, self.style.and_then(|row| STYLES.get(row)))
+                            {
+                                studio.apply(Command::UpdateClip {
+                                    clip_id,
+                                    patch: ClipPatch {
+                                        filters: Some(
+                                            style
+                                                .effects
+                                                .iter()
+                                                .map(|id| AppliedFilter::new(*id))
+                                                .collect(),
+                                        ),
+                                        ..ClipPatch::default()
+                                    },
+                                });
+                            }
                             studio.notify(&t("speech.voiceAddedTimeline"), false);
                         }
                     }
                     // Asked for: the sheet is already on its way down.
                     Err(error) if error.contains("cancel") => self.open = false,
-                    Err(error) => self.message = error,
+                    // Closed while it ran: the panel is not there to say
+                    // it, so the notice does, and the panel too next time.
+                    Err(error) => {
+                        if !self.open {
+                            studio.notify(&error, true);
+                        }
+                        self.message = error;
+                    }
                 }
             }
         }
@@ -258,9 +455,9 @@ impl SpeechPane {
             self.message = t("speech.nothingToReadYet");
             return;
         }
-        let Some(model) = installed(&studio.settings.voices)
+        let Some((model, megabytes)) = installed(&studio.settings.voices)
             .get(self.model)
-            .map(|model| model.id.clone())
+            .map(|model| (model.id.clone(), model.megabytes))
         else {
             self.message = t("speech.downloadVoiceModelFirst");
             return;
@@ -270,7 +467,23 @@ impl SpeechPane {
         // Otherwise the voice is one the model names - and Chatterbox may
         // name none, since its stock voices are Pocket's recordings and
         // are only there while Pocket is.
-        let (voice, reference) = if self.use_sample {
+        let saved = self
+            .saved_voice
+            .filter(|_| !self.use_sample)
+            .and_then(|row| self.saved.get(row));
+        let (voice, reference) = if let Some(saved) = saved {
+            let Some(voice) = self.sample_voice() else {
+                self.message = t("speech.needsCloningModel");
+                return;
+            };
+            (
+                voice,
+                Some(Reference {
+                    path: saved.sample().to_string_lossy().into_owned(),
+                    start: 0.0,
+                }),
+            )
+        } else if self.use_sample {
             let Some(voice) = self.sample_voice() else {
                 self.message = t("speech.modelReadsOnlyOwn");
                 return;
@@ -310,7 +523,7 @@ impl SpeechPane {
         };
         // Remembered: the voice chosen is the voice wanted next time. A
         // sample is a recording in one project, and is not.
-        if !self.use_sample {
+        if !self.use_sample && saved.is_none() {
             studio.prefs.tts_voice = Some(voice);
             studio.prefs.save(&studio.host.dirs);
         }
@@ -320,6 +533,28 @@ impl SpeechPane {
             .and_then(|id| studio.clip(id))
             .map(|clip| clip.start)
             .unwrap_or(f64::from(studio.playhead));
+        // The read as the bar lays it out: the model loaded unless it
+        // still is, the recording the voice comes from read in (Kokoro
+        // has none), and the reading at the pace the last read with this
+        // model measured, or the model's usual pace.
+        let chars = text.chars().count() as f32;
+        let learned = self.timings.get(&model);
+        let loaded = studio.host.speech.loaded_model().as_deref() == Some(model.as_str());
+        let load = if loaded {
+            0.0
+        } else {
+            learned.load.unwrap_or(0.5 + megabytes / 150.0)
+        };
+        let per_char = learned
+            .per_unit
+            .unwrap_or(reading_pace(self.family) / CHARS_PER_SECOND / self.rate());
+        let mut plan = vec![(Stage::Loading, load)];
+        if self.family != Family::Kokoro {
+            plan.push((Stage::Reading, 0.3));
+        }
+        plan.push((Stage::Working, chars * per_char));
+        self.pace = Pace::new(plan);
+        self.reading = Some((model.clone(), chars));
         let request = concat_speech::tts::SpeakRequest {
             model_id: model,
             voice,
@@ -334,14 +569,13 @@ impl SpeechPane {
         let dirs = studio.host.dirs.clone();
         let speech = Arc::clone(&studio.host.speech);
         self.running = true;
-        self.progress = 0.0;
         self.message.clear();
         let epoch = crate::host::project_epoch();
         spawn_in_project(
             move || {
-                let spoken = speech.speak(&dirs, &request, move |fraction| {
+                let spoken = speech.speak(&dirs, &request, move |stage| {
                     on_ui_in_project(epoch, move |studio, _, _| {
-                        studio.handle(Msg::Speech(SpeechMsg::Progress(fraction)));
+                        studio.handle(Msg::Speech(SpeechMsg::Progress(stage)));
                     });
                 })?;
                 let summary = media::probe(&spoken.path)?;
@@ -365,6 +599,8 @@ impl SpeechPane {
             self.sample_media(studio)
                 .map(|sample| sample.name.clone())
                 .unwrap_or_default()
+        } else if let Some(saved) = self.saved_voice.and_then(|row| self.saved.get(row)) {
+            saved.name.clone()
         } else {
             self.offered()
                 .get(self.voice)
@@ -468,11 +704,34 @@ impl SpeechPane {
             .unwrap_or(0)
     }
 
-    /// The voice list's rows: each offered voice's name.
+    /// How many saved voices the voice list offers: all of them for a
+    /// model that reads in a recording, none for one that does not.
+    fn saved_offered(&self) -> usize {
+        if self.clone_row() {
+            self.saved.len()
+        } else {
+            0
+        }
+    }
+
+    /// The saved voices the list offers.
+    fn saved_rows(&self) -> &[SavedVoice] {
+        &self.saved[..self.saved_offered()]
+    }
+
+    /// The voice list's rows: each offered voice's name, then the user's
+    /// saved voices, and last, for a model that reads in a recording, the
+    /// row that clones one.
     pub fn speaker_rows(&self) -> Vec<SharedString> {
         self.offered()
             .iter()
             .map(|speaker| voice_label(&speaker.name).0.into())
+            .chain(
+                self.saved_rows()
+                    .iter()
+                    .map(|voice| voice.name.as_str().into()),
+            )
+            .chain(self.clone_row().then(|| t("speech.cloneFromSample").into()))
             .collect()
     }
 
@@ -482,7 +741,54 @@ impl SpeechPane {
         self.offered()
             .iter()
             .map(|speaker| voice_label(&speaker.name).1.into())
+            .chain(
+                self.saved_rows()
+                    .iter()
+                    .map(|_| t("speech.savedVoice").into()),
+            )
+            .chain(
+                self.clone_row()
+                    .then(|| t("speech.fromRecordingInBin").into()),
+            )
             .collect()
+    }
+
+    /// The voice list's avatars: a voice's picture where it has one, else
+    /// the first letter of its name in the colour its name picks; and a
+    /// plain mark for the clone row, which is nobody yet.
+    pub fn speaker_avatar_rows(&self) -> Vec<crate::ui::AvatarData> {
+        self.offered()
+            .iter()
+            .map(|speaker| {
+                let name = voice_label(&speaker.name).0;
+                let picture = speaker
+                    .avatar
+                    .as_deref()
+                    .and_then(|path| slint::Image::load_from_path(path.as_ref()).ok());
+                crate::ui::AvatarData {
+                    letter: avatar_letter(&name).into(),
+                    hue: avatar_hue(&name),
+                    pictured: picture.is_some(),
+                    picture: picture.unwrap_or_default(),
+                }
+            })
+            .chain(
+                self.saved_rows()
+                    .iter()
+                    .map(|voice| self.saved_avatar(voice)),
+            )
+            .chain(self.clone_row().then(|| crate::ui::AvatarData {
+                letter: "+".into(),
+                hue: -1,
+                ..Default::default()
+            }))
+            .collect()
+    }
+
+    /// Whether the voice list ends in "Clone from a sample…": the model
+    /// reads in a recording, so one can stand in for a named voice.
+    fn clone_row(&self) -> bool {
+        self.sample_voice().is_some()
     }
 
     /// The model list's second lines: what each model is for, in a few
@@ -537,10 +843,30 @@ impl SpeechPane {
     pub fn data(&self, studio: &Studio) -> SpeechSheetData {
         let sample = self.sample_media(studio);
         let length = sample.and_then(|item| item.duration).unwrap_or(0.0);
+        let named = self.offered().len();
         SpeechSheetData {
             open: self.open,
             text: self.text.as_str().into(),
-            voice: self.voice as i32,
+            voice: self
+                .saved_voice
+                .filter(|row| *row < self.saved_offered())
+                .map_or(self.voice, |row| named + row) as i32,
+            voice_count: (named + self.saved_offered()) as i32,
+            style: self
+                .style
+                .and_then(|row| STYLES.get(row))
+                .map(|style| (style.name)())
+                .unwrap_or_default()
+                .into(),
+            save_name: self.save_name.as_str().into(),
+            save_picture: self
+                .save_picture
+                .as_ref()
+                .and_then(|path| path.file_name())
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default()
+                .into(),
+            saving: self.saving,
             model: self.model as i32,
             family: match self.family {
                 Family::Kokoro => 0,
@@ -560,7 +886,16 @@ impl SpeechPane {
             reference_length: length as f32,
             reference_start: self.reference_offset(length) as f32,
             running: self.running,
-            progress: self.progress,
+            progress: self.pace.floor,
+            ceiling: self.pace.ceiling,
+            step: self.pace.step,
+            left: self.pace.left,
+            stage: match self.pace.stage() {
+                Some(Stage::Reading) => t("speech.readingTheSample"),
+                Some(Stage::Working) => t("speech.generatingVoice"),
+                _ => t("speech.loadingTheModel"),
+            }
+            .into(),
             ready: !installed(&studio.settings.voices).is_empty(),
             estimate: self.estimate(studio).into(),
             message: self.message.as_str().into(),
@@ -591,6 +926,143 @@ pub fn insert_tag(text: &str, tag: &str, at: usize) -> String {
         " "
     };
     format!("{before}{lead}{tag}{trail}{after}")
+}
+
+impl SpeechPane {
+    /// The sheet, closed, with the voices saved on this machine.
+    pub fn with_saved(dirs: &concat_host::AppDirs) -> SpeechPane {
+        SpeechPane {
+            saved: voices::list(&voices::dir_in(dirs)),
+            ..SpeechPane::default()
+        }
+    }
+
+    /// The saved voices, read from disk again.
+    pub fn reload_saved(&mut self, studio: &Studio) {
+        self.saved = voices::list(&voices::dir_in(&studio.host.dirs));
+        self.pictures.borrow_mut().clear();
+        if self.saved_voice.is_some_and(|row| row >= self.saved.len()) {
+            self.saved_voice = None;
+        }
+    }
+
+    /// The sheet, just opened, on what the Audio page's card names.
+    fn choose(&mut self, choice: VoiceChoice, studio: &Studio) {
+        let models = installed(&studio.settings.voices);
+        let pick_model = |pane: &mut SpeechPane, row: usize| {
+            pane.model = row;
+            pane.family = models
+                .get(row)
+                .map(|model| family_of(&model.id))
+                .unwrap_or(Family::Kokoro);
+        };
+        match choice {
+            VoiceChoice::Builtin(id) => {
+                let Some(family) = voice_family(id) else {
+                    return;
+                };
+                if self.family != family {
+                    match models
+                        .iter()
+                        .position(|model| family_of(&model.id) == family)
+                    {
+                        Some(row) => pick_model(self, row),
+                        None => {
+                            self.message = t("speech.downloadModelForVoice");
+                            return;
+                        }
+                    }
+                }
+                self.voice = self.voice_row(Some(id));
+            }
+            VoiceChoice::Saved(id) => {
+                if self.sample_voice().is_none() {
+                    match models
+                        .iter()
+                        .position(|model| family_of(&model.id) != Family::Kokoro)
+                    {
+                        Some(row) => pick_model(self, row),
+                        None => {
+                            self.message = t("speech.needsCloningModel");
+                            return;
+                        }
+                    }
+                }
+                self.saved_voice = self.saved.iter().position(|voice| voice.id == id);
+                self.use_sample = false;
+            }
+            VoiceChoice::Style(row) => self.style = (row < STYLES.len()).then_some(row),
+        }
+    }
+
+    /// Keeps the sample being read in as a voice of the user's own, on a
+    /// worker: a few seconds of it from where the sheet listens.
+    fn save_voice(&mut self, studio: &mut Studio) {
+        let name = self.save_name.trim().to_owned();
+        if name.is_empty() || self.saving {
+            return;
+        }
+        let Some(sample) = self.sample_media(studio).cloned() else {
+            self.message = t("speech.pickSampleVoice");
+            return;
+        };
+        let start = self.reference_offset(sample.duration.unwrap_or(0.0));
+        let picture = self.save_picture.clone();
+        let dir = voices::dir_in(&studio.host.dirs);
+        self.saving = true;
+        self.message.clear();
+        crate::host::spawn(
+            move || {
+                voices::save(
+                    &dir,
+                    &name,
+                    std::path::Path::new(&sample.path),
+                    start,
+                    picture.as_deref(),
+                )
+            },
+            |studio, _, _, result| {
+                studio.handle(Msg::Speech(SpeechMsg::VoiceSaved(Box::new(result))));
+            },
+        );
+    }
+}
+
+impl SpeechPane {
+    /// A saved voice's avatar: its picture, or its initial in its colour.
+    pub fn saved_avatar(&self, voice: &SavedVoice) -> crate::ui::AvatarData {
+        let picture = voice
+            .picture_path()
+            .map(|path| {
+                self.pictures
+                    .borrow_mut()
+                    .entry(voice.id.clone())
+                    .or_insert_with(|| slint::Image::load_from_path(&path).unwrap_or_default())
+                    .clone()
+            })
+            .filter(|image| image.size().width > 0);
+        crate::ui::AvatarData {
+            letter: avatar_letter(&voice.name).into(),
+            hue: avatar_hue(&voice.name),
+            pictured: picture.is_some(),
+            picture: picture.unwrap_or_default(),
+        }
+    }
+}
+
+/// A voice's avatar as the Audio page draws it: its initial in the colour
+/// its name picks.
+pub fn letter_avatar(name: &str) -> crate::ui::AvatarData {
+    crate::ui::AvatarData {
+        letter: avatar_letter(name).into(),
+        hue: avatar_hue(name),
+        ..Default::default()
+    }
+}
+
+/// A voice's name and its second line, as the voice list says them.
+pub fn voice_names(name: &str) -> (String, String) {
+    voice_label(name)
 }
 
 /// "af_heart" as a person would say it: the name, and the accent and
@@ -641,9 +1113,48 @@ fn voice_label(name: &str) -> (String, String) {
     (title, detail)
 }
 
+/// The letter a voice's avatar shows: the first of its first name.
+fn avatar_letter(name: &str) -> String {
+    name.split_whitespace()
+        .next()
+        .and_then(|first| first.chars().next())
+        .map(|letter| letter.to_uppercase().collect())
+        .unwrap_or_default()
+}
+
+/// Which of the avatar palette's eight hues a voice's name picks: a hash
+/// of the name (FNV-1a), so a voice keeps its colour from run to run.
+fn avatar_hue(name: &str) -> i32 {
+    let hash = name
+        .to_lowercase()
+        .bytes()
+        .fold(0x811c_9dc5_u32, |hash, byte| {
+            (hash ^ u32::from(byte)).wrapping_mul(0x0100_0193)
+        });
+    (hash % 8) as i32
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{insert_tag, voice_label};
+    use super::{avatar_hue, avatar_letter, insert_tag, voice_label};
+
+    /// An avatar is the first letter of the first name, in a colour the
+    /// name settles: the same every time, one of the palette's eight.
+    #[test]
+    fn a_voice_avatar_is_its_initial_in_its_own_colour() {
+        assert_eq!(avatar_letter("Bria"), "B");
+        assert_eq!(avatar_letter("émile dupont"), "É");
+        assert_eq!(avatar_letter(""), "");
+        assert_eq!(avatar_hue("Bria"), avatar_hue("bria"));
+        let hues: std::collections::HashSet<i32> = [
+            "Bria", "Adam", "Heart", "Lewis", "Nova", "Sky", "Eric", "Alba",
+        ]
+        .iter()
+        .map(|name| avatar_hue(name))
+        .collect();
+        assert!(hues.iter().all(|hue| (0..8).contains(hue)));
+        assert!(hues.len() > 2, "names spread over the palette: {hues:?}");
+    }
 
     /// A tag lands as a word of its own wherever the caret is: spaced off a
     /// word on either side, not doubled against a space already there, and

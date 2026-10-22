@@ -1,13 +1,11 @@
 # Code signing policy
 
-Free code signing provided by [SignPath.io](https://about.signpath.io/),
-certificate by [SignPath Foundation](https://signpath.org/).
+**Windows releases are not code-signed yet.** Windows shows a SmartScreen
+warning before an unsigned program runs (**More info** › **Run anyway**), and
+where Smart App Control is on, it refuses to run it at all. Once Concat has a
+signing certificate, every Windows release is signed under this policy.
 
-Concat has applied to SignPath Foundation. Until the application is accepted,
-Windows releases are not signed; once it is, every Windows release is signed
-under this policy.
-
-## What is signed
+## What will be signed
 
 The Windows program (`concat.exe`) and its installers (the setup `.exe` and the
 `.msi`), built from this repository. Libraries Concat ships but does not build
@@ -37,8 +35,7 @@ carry their own maintainers' signatures where they have them.
 
 Committers may change the source without further review. Every change from
 anyone else, such as a pull request, is reviewed by a reviewer before it is
-merged. Every member uses multi-factor authentication on GitHub and on
-SignPath.
+merged. Every member uses multi-factor authentication on GitHub.
 
 ## Privacy policy
 
@@ -46,10 +43,12 @@ This program will not transfer any information to other networked systems
 unless specifically requested by the user or the person installing or operating
 it. Concat reaches the network only when you ask it to:
 
-- **Check for updates** in Settings asks GitHub for the list of releases, and
-  installing one downloads it from GitHub.
+- **Settings › Version** asks GitHub for the list of releases when you open
+  it or press **Check for updates**, and installing one downloads it from
+  GitHub.
 - **Downloading a model** (transcription, speech, cutout) fetches it from the
-  address shown in Settings.
+  source picked under **Downloads** in Settings › General, and tries the other
+  sources listed there if that one fails.
 - **The Remote API** is off by default. Turned on, it listens on this computer
   (`127.0.0.1`) unless you give it another address, and answers only callers
   that hold its token.

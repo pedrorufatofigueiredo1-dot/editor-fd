@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// SPDX-FileCopyrightText: 2026 Jareer and Concat contributors
+// SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
 
 import { I18n } from "../i18n.slint";
 import { Theme } from "../theme/theme.slint";
@@ -14,6 +14,7 @@ import {
 import { Button } from "../primitives/modal.slint";
 import { SegmentedControl } from "../primitives/segmented-control.slint";
 import { Select } from "../primitives/select.slint";
+import { SpeedGraph, SpeedRamp } from "speed-ramp.slint";
 import {
     Check,
     ColourField,
@@ -38,6 +39,8 @@ import {
     WheelGroupData,
 } from "grading.slint";
 import {
+    Backdrop,
+    BackdropData,
     ClipField,
     ClipKind,
     Keyframes,
@@ -153,6 +156,17 @@ export struct AppliedParamData {
     here: bool,
     prev: bool,
     next: bool,
+}
+
+/// One knob of a transition that is a choice among a few - Push's
+/// direction - drawn as segments: a direction is picked, not dialled.
+export struct TransitionChoiceData {
+    key: string,
+    label: string,
+    options: [string],
+    /// The value each option stores, in the same order.
+    values: [float],
+    current: int,
 }
 
 /// One colour knob of one link - a key's screen colour - drawn as a swatch
@@ -879,6 +893,20 @@ component AnalysisRow inherits Row {
     }
 }
 
+/// The stabilization analysis at work on the clip's media: the camera's
+/// movement measured frame by frame, the clip shown as shot until it is.
+component StabilizeRow inherits Row {
+    in property <float> progress;
+
+    label: I18n.t("clipInspector.analysis");
+    Text {
+        text: I18n.t1("clipInspector.measuringShake", "\{Math.round(root.progress * 100)}");
+        color: Theme.fg-muted;
+        font-size: Theme.fs;
+        vertical-alignment: center;
+    }
+}
+
 /// Enhance at work on the clip's media: the model on its way, then the
 /// frames, one by one, into the copy the clip will show.
 component EnhanceRow inherits Row {
@@ -921,6 +949,81 @@ component Hairline inherits HorizontalLayout {
     }
 }
 
+/// The rows that choose a background: what kind, then the one knob that
+/// kind has - a blur's softness, a colour, which still. The timeline's in
+/// the Details panel, a clip's own in its Video panel, where one more kind
+/// leads the list: the timeline's, followed.
+export component BackgroundRows inherits VerticalLayout {
+    /// The selected clip's own rather than the timeline's.
+    in property <bool> own;
+
+    property <BackdropData> data: root.own ? Backdrop.clip : Backdrop.timeline;
+    property <int> picked: root.data.mode;
+    property <int> kind: root.data.mode;
+    // Seeded rather than bound: the knob writes it as it is dragged.
+    property <float> amount;
+    init => { root.amount = root.data.amount; }
+    changed data => { root.amount = root.data.amount; }
+
+    property <[string]> kinds: [
+        I18n.t("clipInspector.backgroundNone"),
+        I18n.t("clipInspector.backgroundBlur"),
+        I18n.t("common.color"),
+        I18n.t("clipInspector.backgroundImage"),
+    ];
+
+    Row {
+        label: I18n.t("clipInspector.background");
+        Select {
+            options: root.kinds;
+            // Set again whenever the kind changes: a press assigns `current`
+            // inside the control and ends a plain binding (#250).
+            property <int> shown: root.picked;
+            current: self.shown;
+            changed shown => { self.current = self.shown; }
+            changed(index) => {
+                Backdrop.set-mode(root.own, index);
+            }
+        }
+    }
+
+    if root.kind == 1: Param {
+        label: I18n.t("clipInspector.softness");
+        value <=> root.amount;
+        minimum: 0;
+        maximum: 1;
+        step: 0.01;
+        default-value: 0.5;
+        fmt: ParamFormat.fraction;
+        unit: "%";
+        unit-scale: 100;
+        changed(v) => { Backdrop.set-amount(root.own, v); }
+    }
+
+    if root.kind == 2: ColourField {
+        label: I18n.t("common.color");
+        value: root.data.colour;
+        alpha: false;
+        changed(colour) => { Backdrop.set-colour(root.own, colour); }
+    }
+
+    if root.kind == 3 && Backdrop.stills.length > 0: Row {
+        label: I18n.t("clipInspector.still");
+        Select {
+            options: Backdrop.stills;
+            property <int> still: root.data.still;
+            current: self.still;
+            changed still => { self.current = self.still; }
+            placeholder: I18n.t("clipInspector.pickStill");
+            changed(index) => { Backdrop.set-still(root.own, index); }
+        }
+    }
+
+    if root.kind == 3 && Backdrop.stills.length == 0: Note {
+        text: I18n.t("clipInspector.noStillsInBin");
+    }
+}
+
 /// Video: how the picture sits in the frame, how solid it is, and whether
 /// its background is keyed out.
 export component VideoPanel inherits VerticalLayout {
@@ -932,10 +1035,16 @@ export component VideoPanel inherits VerticalLayout {
     in property <[AppliedParamData]> params;
     /// The chain's colour knobs: the key's screen colour among them.
     in property <[ColourKnobData]> colours;
+    /// Fit and Fill under Transform, and the clip's Background section:
+    /// the desk's. A phone has them on a Canvas sheet of their own.
+    in property <bool> canvas: true;
     /// The custom cutout's brush; see Editor.
     in property <int> brush-tool;
     in property <float> brush-size;
     in property <bool> painting;
+    /// Whether the Mask section is here: the phone gives the mask a tool
+    /// and a sheet of its own instead.
+    in property <bool> mask-section: true;
 
     callback set(field: ClipField, value: float);
     /// A control gesture finished: the accumulated change becomes one command.
@@ -1008,9 +1117,37 @@ export component VideoPanel inherits VerticalLayout {
     property <float> crop-right;
     property <float> crop-bottom;
     property <float> feather;
+    property <float> mask-x;
+    property <float> mask-y;
+    property <float> mask-width;
+    property <float> mask-height;
+    property <float> mask-rotation;
+    property <float> mask-roundness;
+    property <float> mask-feather;
+    property <float> smoothness;
+    property <float> max-zoom;
+    /// The mask's shape, as the picker orders them: -1 for none.
+    property <int> mask: root.selected.mask;
+    property <[string]> mask-names: [
+        I18n.t("mask.linear"),
+        I18n.t("mask.mirror"),
+        I18n.t("mask.circle"),
+        I18n.t("mask.rectangle"),
+        I18n.t("mask.heart"),
+        I18n.t("mask.star")
+    ];
 
     function seed() {
         root.feather = root.selected.cutout-feather;
+        root.smoothness = root.selected.stabilize-smoothness;
+        root.max-zoom = root.selected.stabilize-max-zoom;
+        root.mask-x = root.selected.mask-x;
+        root.mask-y = root.selected.mask-y;
+        root.mask-width = root.selected.mask-width;
+        root.mask-height = root.selected.mask-height;
+        root.mask-rotation = root.selected.mask-rotation;
+        root.mask-roundness = root.selected.mask-roundness;
+        root.mask-feather = root.selected.mask-feather;
         root.scale = root.selected.scale;
         root.offset-x = root.selected.offset-x;
         root.offset-y = root.selected.offset-y;
@@ -1133,6 +1270,51 @@ export component VideoPanel inherits VerticalLayout {
                 unit-scale: 100;
                 changed(v) => { root.set(ClipField.stretch-y, v); root.commit(); }
             }
+
+            // The picture sized to the frame in one press: the whole of it
+            // inside, or the frame covered - what a landscape shot in a
+            // vertical cut needs one way or the other.
+            if root.canvas && Backdrop.can-frame: Row {
+                label: I18n.t("common.size");
+                Button {
+                    label: I18n.t("clipInspector.fit");
+                    glyph: Glyph.fit;
+                    horizontal-stretch: 1;
+                    clicked => { Backdrop.frame(false); }
+                }
+                Button {
+                    label: I18n.t("clipInspector.fill");
+                    glyph: Glyph.maximize;
+                    horizontal-stretch: 1;
+                    clicked => { Backdrop.frame(true); }
+                }
+            }
+        }
+    }
+
+    // What fills the frame where this picture does not reach: the
+    // timeline's background, or one of the clip's own. Only on the lowest
+    // picture lane, which is where a background is drawn.
+    if root.canvas && Backdrop.clip-has: Section {
+        canvas := SectionHeader {
+            title: I18n.t("phone.canvas");
+            collapsible: true;
+            HelpButton {
+                text: I18n.t("clipInspector.canvasHelp");
+            }
+        }
+
+        if canvas.open: SectionBody {
+            BackgroundRows {
+                own: true;
+            }
+            // As in CapCut: this clip's background for every picture on
+            // the main lane, which is how the timeline's is set.
+            Button {
+                label: I18n.t("clipInspector.applyToAll");
+                block: true;
+                clicked => { Backdrop.apply-to-all(); }
+            }
         }
     }
 
@@ -1179,6 +1361,76 @@ export component VideoPanel inherits VerticalLayout {
                 label: I18n.t("clipInspector.flipVertical");
                 checked: root.selected.flip-v;
                 toggled(on) => { root.set(ClipField.flip-v, on ? 1 : 0); root.commit(); }
+            }
+        }
+    }
+
+    // The camera's shake taken out: the media's movement is measured once
+    // in the background, and the correction is worked out from it live, so
+    // the sliders answer at once. Footage only.
+    if root.selected.kind == ClipKind.video: Section {
+        stabilize := SectionHeader {
+            title: I18n.t("clipInspector.stabilize");
+            collapsible: true;
+            switchable: true;
+            on: root.selected.stabilize;
+            switched(on) => {
+                root.set(ClipField.stabilize, on ? 1 : 0);
+                root.commit();
+            }
+            summary: !root.selected.stabilize ? I18n.t("common.off")
+                : root.selected.stabilize-progress >= 0
+                    ? I18n.t1("clipInspector.measuringShake", "\{Math.round(root.selected.stabilize-progress * 100)}")
+                : root.selected.stabilize-zoom > 0
+                    ? I18n.t1("clipInspector.zoomPercent", "\{Math.round(root.selected.stabilize-zoom * 100)}")
+                : "";
+            HelpButton {
+                text: I18n.t("clipInspector.stabilizeHelp");
+            }
+        }
+
+        if stabilize.open && root.selected.stabilize: SectionBody {
+            Param {
+                label: I18n.t("clipInspector.smoothness");
+                value <=> root.smoothness;
+                minimum: 0;
+                maximum: 1;
+                step: 0.01;
+                default-value: 0.5;
+                fmt: ParamFormat.fraction;
+                unit: "%";
+                unit-scale: 100;
+                changed(v) => { root.set(ClipField.stabilize-smoothness, v); root.commit(); }
+            }
+
+            Param {
+                label: I18n.t("clipInspector.maxZoom");
+                value <=> root.max-zoom;
+                minimum: 1;
+                maximum: 1.5;
+                step: 0.01;
+                default-value: 1.2;
+                fmt: ParamFormat.fraction;
+                unit: "%";
+                unit-scale: 100;
+                changed(v) => { root.set(ClipField.stabilize-max-zoom, v); root.commit(); }
+            }
+
+            SwitchRow {
+                label: I18n.t("clipInspector.tripod");
+                checked: root.selected.stabilize-tripod;
+                toggled(on) => { root.set(ClipField.stabilize-tripod, on ? 1 : 0); root.commit(); }
+            }
+
+            if root.selected.stabilize-progress >= 0: StabilizeRow {
+                progress: root.selected.stabilize-progress;
+            }
+            if root.selected.stabilize-progress < 0 && root.selected.stabilize-zoom > 0: Note {
+                text: root.selected.stabilize-needed > root.selected.stabilize-zoom + 0.005
+                    ? I18n.t2("clipInspector.stabilizeEased",
+                        "\{Math.round(root.selected.stabilize-zoom * 100)}",
+                        "\{Math.round(root.selected.stabilize-needed * 100)}")
+                    : I18n.t1("clipInspector.stabilizeZoom", "\{Math.round(root.selected.stabilize-zoom * 100)}");
             }
         }
     }
@@ -1398,6 +1650,183 @@ export component VideoPanel inherits VerticalLayout {
         }
     }
 
+    // The mask: a shape that keeps part of the picture, CapCut's Mask.
+    // The row of shapes picks one - the first, None, takes it off - and
+    // the numbers below place, size, turn and soften it, each keyable.
+    // Drawn on the picture as it is seen, so it moves with the clip; the
+    // monitor shows its outline with grips to drag while this is open.
+    if root.mask-section
+        && (root.selected.kind == ClipKind.video || root.selected.kind == ClipKind.image): Section {
+        mask-header := SectionHeader {
+            title: I18n.t("mask.title");
+            collapsible: true;
+            summary: root.mask < 0 ? I18n.t("common.none")
+                : root.mask-names[Math.min(root.mask, root.mask-names.length - 1)]
+                    + (root.selected.mask-invert ? " · " + I18n.t("mask.invert") : "");
+        }
+
+        if mask-header.open: SectionBody {
+            HorizontalLayout {
+                padding-left: Theme.pad;
+                padding-right: Theme.pad;
+                spacing: 4px;
+                ToolButton {
+                    glyph: Glyph.close;
+                    label: I18n.t("common.none");
+                    checked: root.mask < 0;
+                    clicked => { root.set(ClipField.mask-shape, -1); root.commit(); }
+                }
+                ToolButton {
+                    glyph: Glyph.mask-linear;
+                    label: root.mask-names[0];
+                    checked: root.mask == 0;
+                    clicked => { root.set(ClipField.mask-shape, 0); root.commit(); }
+                }
+                ToolButton {
+                    glyph: Glyph.mask-mirror;
+                    label: root.mask-names[1];
+                    checked: root.mask == 1;
+                    clicked => { root.set(ClipField.mask-shape, 1); root.commit(); }
+                }
+                ToolButton {
+                    glyph: Glyph.mask-circle;
+                    label: root.mask-names[2];
+                    checked: root.mask == 2;
+                    clicked => { root.set(ClipField.mask-shape, 2); root.commit(); }
+                }
+                ToolButton {
+                    glyph: Glyph.mask-rectangle;
+                    label: root.mask-names[3];
+                    checked: root.mask == 3;
+                    clicked => { root.set(ClipField.mask-shape, 3); root.commit(); }
+                }
+                ToolButton {
+                    glyph: Glyph.mask-heart;
+                    label: root.mask-names[4];
+                    checked: root.mask == 4;
+                    clicked => { root.set(ClipField.mask-shape, 4); root.commit(); }
+                }
+                ToolButton {
+                    glyph: Glyph.mask-star;
+                    label: root.mask-names[5];
+                    checked: root.mask == 5;
+                    clicked => { root.set(ClipField.mask-shape, 5); root.commit(); }
+                }
+            }
+
+            if root.mask >= 0: SwitchRow {
+                label: I18n.t("mask.invert");
+                checked: root.selected.mask-invert;
+                toggled(on) => { root.set(ClipField.mask-invert, on ? 1 : 0); root.commit(); }
+            }
+
+            if root.mask >= 0: Param {
+                label: I18n.t("common.positionX");
+                keyable: true;
+                field: ClipField.mask-x;
+                value <=> root.mask-x;
+                minimum: -1;
+                maximum: 1;
+                step: 0.005;
+                default-value: 0;
+                fmt: ParamFormat.centred;
+                unit: "%";
+                unit-scale: 100;
+                changed(v) => { root.set(ClipField.mask-x, v); root.commit(); }
+            }
+
+            if root.mask >= 0: Param {
+                label: I18n.t("common.positionY");
+                keyable: true;
+                field: ClipField.mask-y;
+                value <=> root.mask-y;
+                minimum: -1;
+                maximum: 1;
+                step: 0.005;
+                default-value: 0;
+                fmt: ParamFormat.centred;
+                unit: "%";
+                unit-scale: 100;
+                changed(v) => { root.set(ClipField.mask-y, v); root.commit(); }
+            }
+
+            // A line has no size, and a mirror only its thickness.
+            if root.mask >= 2: Param {
+                label: I18n.t("common.width");
+                keyable: true;
+                field: ClipField.mask-width;
+                value <=> root.mask-width;
+                minimum: 0.01;
+                maximum: 4;
+                step: 0.01;
+                default-value: 0.66;
+                fmt: ParamFormat.fraction;
+                unit: "%";
+                unit-scale: 100;
+                changed(v) => { root.set(ClipField.mask-width, v); root.commit(); }
+            }
+
+            if root.mask >= 1: Param {
+                label: root.mask == 1 ? I18n.t("mask.thickness") : I18n.t("common.height");
+                keyable: true;
+                field: ClipField.mask-height;
+                value <=> root.mask-height;
+                minimum: 0.01;
+                maximum: 4;
+                step: 0.01;
+                default-value: root.mask == 1 ? 0.33 : 0.66;
+                fmt: ParamFormat.fraction;
+                unit: "%";
+                unit-scale: 100;
+                changed(v) => { root.set(ClipField.mask-height, v); root.commit(); }
+            }
+
+            if root.mask >= 0: Param {
+                label: I18n.t("common.rotation");
+                keyable: true;
+                field: ClipField.mask-rotation;
+                value <=> root.mask-rotation;
+                minimum: -180;
+                maximum: 180;
+                step: 1;
+                default-value: 0;
+                fmt: ParamFormat.degrees;
+                unit: "°";
+                changed(v) => { root.set(ClipField.mask-rotation, v); root.commit(); }
+            }
+
+            if root.mask == 3: Param {
+                label: I18n.t("mask.roundness");
+                keyable: true;
+                field: ClipField.mask-roundness;
+                value <=> root.mask-roundness;
+                minimum: 0;
+                maximum: 1;
+                step: 0.01;
+                default-value: 0;
+                fmt: ParamFormat.fraction;
+                unit: "%";
+                unit-scale: 100;
+                changed(v) => { root.set(ClipField.mask-roundness, v); root.commit(); }
+            }
+
+            if root.mask >= 0: Param {
+                label: I18n.t("clipInspector.feather");
+                keyable: true;
+                field: ClipField.mask-feather;
+                value <=> root.mask-feather;
+                minimum: 0;
+                maximum: 1;
+                step: 0.01;
+                default-value: 0;
+                fmt: ParamFormat.fraction;
+                unit: "%";
+                unit-scale: 100;
+                changed(v) => { root.set(ClipField.mask-feather, v); root.commit(); }
+            }
+        }
+    }
+
     // What is cut off the source before it is fitted. Fractions of the
     // source's own edges, so a crop survives a change of output size.
     if !root.figure: Section {
@@ -1465,14 +1894,83 @@ export component VideoPanel inherits VerticalLayout {
     }
 }
 
+/// One half of Enhance's before and after: a label over the picture,
+/// fitted whole into a fixed height so the pair reads the same on a phone
+/// as in the desktop inspector, and nothing in the layout leans on the
+/// picture's own size.
+component PreviewHalf inherits VerticalLayout {
+    in property <string> label;
+    in property <image> source;
+
+    padding-left: Theme.pad;
+    padding-right: Theme.pad;
+    spacing: 4px;
+
+    Text {
+        text: root.label;
+        color: Theme.fg-muted;
+        font-size: Theme.fs-sm;
+    }
+    Rectangle {
+        height: 150px;
+        background: Theme.well;
+        border-radius: Theme.r-sm;
+        clip: true;
+
+        Image {
+            width: parent.width;
+            height: parent.height;
+            source: root.source;
+            image-fit: contain;
+        }
+    }
+}
+
 /// Enhance: the picture restored and enlarged by the model, into a copy the
-/// clip then shows. The header's tick starts it the first time; once there
-/// is a copy, it switches between the copy and the original without running
-/// the model again.
+/// clip then shows.
+///
+/// The header's tick never starts minutes of work by itself: it turns the
+/// section on - its settings, its preview and its button come alive - and,
+/// once there is a copy, switches the clip between the copy and its
+/// original without running the model again. The run is the button's:
+/// Enhance, Enhance again once there is a copy, and Terminate while one is
+/// going.
+///
+/// Below the tick, what the run is made with - Size and Strength - and a
+/// preview of the frame under the playhead at those settings, so the
+/// person judges the look, and what a whole run will cost, in seconds
+/// rather than after minutes of their machine. Strength is the answer to
+/// the waxen, "plastic" faces a full-strength enhancer is known for: it
+/// blends the model's answer back towards the original.
 export component EnhancePanel inherits VerticalLayout {
     in property <SelectedClipData> selected;
 
+    /// The tick: the section on or off, and the copy shown or not.
     callback enhance-set(on: bool);
+    /// 0 Auto, 1 once, 2 twice, 3 four times.
+    callback enhance-size(index: int);
+    callback enhance-strength(strength: float);
+    callback enhance-preview();
+    /// The button: a run with the settings as they are, or, while this
+    /// clip's run is going, its end.
+    callback enhance-run();
+
+    /// This clip's run is going: the button stops it rather than starts one.
+    property <bool> running: root.selected.enhance-progress >= 0;
+    /// The section is ticked: everything under the header answers.
+    property <bool> live: root.selected.enhance-on;
+
+    property <float> strength;
+
+    init => {
+        root.strength = root.selected.enhance-strength;
+    }
+    // Put back on every publish: a click on the row takes its binding, and
+    // the next clip's file may not take the size this one showed.
+    changed selected => {
+        root.strength = root.selected.enhance-strength;
+        sizes.current = root.selected.enhance-size;
+    }
 
     Section {
         first: true;
@@ -1481,19 +1979,103 @@ export component EnhancePanel inherits VerticalLayout {
             switchable: true;
             on: root.selected.enhance-on;
             switched(on) => { root.enhance-set(on); }
+            HelpButton {
+                text: I18n.t("clipInspector.enhanceExplain");
+            }
         }
 
         SectionBody {
-            if root.selected.enhance-progress >= 0: EnhanceRow {
+            if root.running: EnhanceRow {
                 progress: root.selected.enhance-progress;
                 fetching: root.selected.enhance-fetching;
             }
-            if root.selected.enhance-progress < 0: Note {
-                text: root.selected.enhance-linked
-                    ? (root.selected.enhance-on
-                        ? I18n.t("clipInspector.enhanceShowingCopy")
-                        : I18n.t("clipInspector.enhanceShowingOriginal"))
-                    : I18n.t("clipInspector.enhanceExplain");
+            if !root.running && root.selected.enhance-linked: Note {
+                text: root.selected.enhance-on
+                    ? I18n.t("clipInspector.enhanceShowingCopy")
+                    : I18n.t("clipInspector.enhanceShowingOriginal");
+            }
+
+            // A dropdown, as the inspector's other choices of one are:
+            // the sizes past the longest side the model can take are
+            // listed greyed, and the note under the row says why.
+            Row {
+                label: I18n.t("clipInspector.enhanceSize");
+                sizes := Select {
+                    options: [
+                        I18n.t1("clipInspector.enhanceAuto", "\{root.selected.enhance-auto}x"),
+                        "1x",
+                        "2x",
+                        "4x",
+                    ];
+                    disabled: [
+                        false,
+                        false,
+                        !root.selected.enhance-fits-2x,
+                        !root.selected.enhance-fits-4x,
+                    ];
+                    current: root.selected.enhance-size;
+                    enabled: root.live;
+                    changed(index) => { root.enhance-size(index); }
+                }
+            }
+            if root.selected.enhance-size-note != "": Note {
+                text: root.selected.enhance-size-note;
+            }
+
+            Param {
+                label: I18n.t("clipInspector.enhanceStrength");
+                value <=> root.strength;
+                minimum: 0;
+                maximum: 1;
+                step: 0.01;
+                default-value: 0.75;
+                fmt: ParamFormat.fraction;
+                unit: "%";
+                unit-scale: 100;
+                enabled: root.live;
+                changed(v) => { root.enhance-strength(v); }
+            }
+            Note {
+                text: I18n.t("clipInspector.enhanceStrengthExplain");
+            }
+
+            Row {
+                Button {
+                    label: I18n.t("clipInspector.enhancePreview");
+                    enabled: root.live && !root.selected.enhance-busy;
+                    clicked => { root.enhance-preview(); }
+                }
+                Rectangle { horizontal-stretch: 1; }
+                // One button for the run, whatever stage it is at. While
+                // this clip's run goes it is the way to stop it, even though
+                // the model is then busy; otherwise it waits for the model.
+                Button {
+                    primary: !root.running;
+                    danger: root.running;
+                    label: root.running ? I18n.t("clipInspector.enhanceTerminate")
+                        : root.selected.enhance-linked ? I18n.t("clipInspector.enhanceAgain")
+                        : I18n.t("clipInspector.enhanceRun");
+                    enabled: root.running || (root.live && !root.selected.enhance-busy);
+                    clicked => { root.enhance-run(); }
+                }
+            }
+            if root.selected.enhance-previewing: Note {
+                text: root.selected.enhance-preview-fetch >= 0
+                    ? I18n.t1("clipInspector.fetchingTheModel",
+                        "\{Math.round(root.selected.enhance-preview-fetch * 100)}")
+                    : I18n.t("clipInspector.enhancePreviewing");
+            }
+
+            if root.selected.enhance-preview: PreviewHalf {
+                label: I18n.t("clipInspector.enhanceBefore");
+                source: root.selected.enhance-before;
+            }
+            if root.selected.enhance-preview: PreviewHalf {
+                label: I18n.t1("clipInspector.enhanceAfter", "\{Math.round(root.strength * 100)}");
+                source: root.selected.enhance-after;
+            }
+            if root.selected.enhance-preview: Note {
+                text: root.selected.enhance-estimate;
             }
         }
     }
@@ -1505,12 +2087,17 @@ export component EnhancePanel inherits VerticalLayout {
 /// clips rather than to either of them.
 export component TransitionPanel inherits VerticalLayout {
     in property <SelectedTransitionData> transition;
+    /// The package's own knobs, numbers and choices, as set on this cut.
+    in property <[AppliedParamData]> knobs;
+    in property <[TransitionChoiceData]> choices;
 
     /// Taken off, leaving a plain cut.
     callback remove();
     /// Set to a new length - clamped as applying one is, so this can never
     /// ask for more than the cut can give it.
     callback duration-set(seconds: float);
+    /// One of the package's knobs moved.
+    callback param-set(key: string, value: float);
 
     property <float> duration;
 
@@ -1572,6 +2159,43 @@ export component TransitionPanel inherits VerticalLayout {
                 fmt: ParamFormat.seconds2;
                 changed(v) => { root.duration-set(v); }
             }
+
+            for choice in root.choices: VerticalLayout {
+                padding-left: Theme.pad;
+                padding-right: Theme.pad;
+                padding-top: 4px;
+                padding-bottom: 4px;
+                spacing: 4px;
+
+                Text {
+                    text: choice.label;
+                    color: Theme.fg-muted;
+                    font-size: Theme.fs-sm;
+                }
+                SegmentedControl {
+                    options: choice.options;
+                    current: choice.current;
+                    changed(index) => { root.param-set(choice.key, choice.values[index]); }
+                }
+            }
+
+            for p in root.knobs: Rectangle {
+                property <AppliedParamData> data: p;
+                height: knob.preferred-height;
+                changed data => { knob.value = self.data.value; }
+
+                knob := Param {
+                    unit: p.unit;
+                    label: p.label;
+                    value: p.value;
+                    minimum: p.min;
+                    maximum: p.max;
+                    step: p.step;
+                    default-value: p.default-value;
+                    fmt: p.fmt;
+                    changed(v) => { root.param-set(p.key, v); }
+                }
+            }
         }
     }
 }
@@ -1592,7 +2216,7 @@ export component AudioPanel inherits VerticalLayout {
     /// The Source section has something to offer: a choice of audio track.
     /// A file's colour range used to sit here too and is the media's now,
     /// in the bin card's menu: it is a fact about the file, not the cut.
-    property <bool> choosing: root.audio-tracks.length > 1;
+    property <bool> choosing: !root.selected.batch-volume && root.audio-tracks.length > 1;
 
     callback set(field: ClipField, value: float);
     callback commit();
@@ -1657,7 +2281,7 @@ export component AudioPanel inherits VerticalLayout {
         if volume.open: SectionBody {
             Param {
                 label: I18n.t("common.level");
-                keyable: true;
+                keyable: !root.selected.batch-volume;
                 field: ClipField.volume;
                 rail: true;
                 value <=> root.level;
@@ -1678,7 +2302,7 @@ export component AudioPanel inherits VerticalLayout {
         }
     }
 
-    Section {
+    if !root.selected.batch-volume: Section {
         fades := SectionHeader {
             title: I18n.t("clipInspector.fades");
             collapsible: true;
@@ -1726,7 +2350,7 @@ export component AudioPanel inherits VerticalLayout {
     // Whether the voice keeps its pitch when the rate is not 1. Here and
     // not on the Speed tab: the rate is the clip's, but what it does to the
     // sound is the sound's business, beside the level it is mixed at.
-    Section {
+    if !root.selected.batch-volume: Section {
         SectionHeader {
             title: I18n.t("clipInspector.pitch");
         }
@@ -1744,9 +2368,9 @@ export component AudioPanel inherits VerticalLayout {
     }
 }
 
-/// Speed: the rate, and only the rate. Speed that changes over the clip is
-/// the keyframes' job; whether the sound's pitch follows the rate is the
-/// Audio tab's.
+/// Speed: one rate for the whole clip, or a curve - speed that changes over
+/// the clip, shaped on a graph or picked from a preset (see
+/// speed-ramp.slint). Whether the sound's pitch follows is the Audio tab's.
 export component SpeedPanel inherits VerticalLayout {
     in property <SelectedClipData> selected;
     /// The panel's first section, with no hairline above it; false where
@@ -1757,16 +2381,35 @@ export component SpeedPanel inherits VerticalLayout {
     callback commit();
 
     property <float> speed;
-    function seed() { root.speed = root.selected.speed; }
+    function seed() {
+        root.speed = root.selected.speed;
+        root.fastest = SpeedRamp.fastest;
+        root.slowest = SpeedRamp.slowest;
+    }
     init => { root.seed(); }
     changed selected => { root.seed(); }
+
+    // Rust's word on the mode and the preset.
+    property <bool> curved: SpeedRamp.curved;
+    property <int> preset: SpeedRamp.preset;
+    // The two sliders' values, seeded from Rust's like the rate's: a
+    // slider writes its own value as it is dragged, which would end a
+    // binding.
+    property <float> fastest;
+    property <float> slowest;
+    property <float> fastest-truth: SpeedRamp.fastest;
+    property <float> slowest-truth: SpeedRamp.slowest;
+    changed fastest-truth => { root.fastest = root.fastest-truth; }
+    changed slowest-truth => { root.slowest = root.slowest-truth; }
 
     Section {
         first: root.first;
         speed := SectionHeader {
             title: I18n.t("common.speed");
             collapsible: true;
-            summary: InspectorFmt.format(ParamFormat.rate, root.speed);
+            summary: root.curved
+                ? I18n.t("speedRamp.curve")
+                : InspectorFmt.format(ParamFormat.rate, root.speed);
             HelpButton {
                 text: I18n.t("clipInspector.rateReTimesClip");
             }
@@ -1777,7 +2420,99 @@ export component SpeedPanel inherits VerticalLayout {
                 progress: root.selected.reverse-progress;
             }
 
-            Param {
+            HorizontalLayout {
+                padding-left: Theme.pad;
+                padding-right: Theme.pad;
+
+                SegmentedControl {
+                    // A press assigns `current` inside the control, which
+                    // ends a plain binding: so it is set again from Rust's
+                    // word whenever the selection or an undo changes it.
+                    property <bool> truth: root.curved;
+                    changed truth => { self.current = self.truth ? 1 : 0; }
+
+                    options: [I18n.t("speedRamp.constant"), I18n.t("speedRamp.curve")];
+                    current: root.curved ? 1 : 0;
+                    changed(index) => {
+                        SpeedRamp.curve(index == 1);
+                        root.commit();
+                    }
+                }
+            }
+
+            if root.curved: Row {
+                label: I18n.t("speedRamp.shape");
+                Select {
+                    // As the mode's: a pick ends the binding, Rust restores it.
+                    property <int> truth: root.preset;
+                    changed truth => { self.current = self.truth; }
+
+                    options: SpeedRamp.presets;
+                    current: root.preset;
+                    placeholder: I18n.t("speedRamp.custom");
+                    changed(index) => {
+                        SpeedRamp.preset-chosen(index);
+                        root.commit();
+                    }
+                }
+            }
+
+            if root.curved: SpeedGraph {
+                padding-left: Theme.pad;
+                padding-right: Theme.pad;
+                point(index, x, y) => {
+                    SpeedRamp.point(index, x, y);
+                    root.commit();
+                }
+                remove(index) => {
+                    SpeedRamp.remove(index);
+                    root.commit();
+                }
+            }
+
+            if root.curved: Row {
+                label: I18n.t("speedRamp.bends");
+                SegmentedControl {
+                    // As the mode's: set again from Rust's word.
+                    property <bool> truth: SpeedRamp.smooth;
+                    changed truth => { self.current = self.truth ? 0 : 1; }
+
+                    options: [I18n.t("speedRamp.smooth"), I18n.t("speedRamp.straight")];
+                    current: SpeedRamp.smooth ? 0 : 1;
+                    changed(index) => {
+                        SpeedRamp.smoothness(index == 0);
+                        root.commit();
+                    }
+                }
+            }
+
+            // The two extremes, for a ramp that is right in shape and too
+            // much or too little in strength: the fastest stretch brought
+            // down to 4x brings the rest of it along.
+            if root.curved && root.fastest > 0: Param {
+                label: I18n.t("speedRamp.fastest");
+                value <=> root.fastest;
+                minimum: 1.1;
+                maximum: 16;
+                step: 0.05;
+                default-value: 2;
+                fmt: ParamFormat.rate;
+                unit: "x";
+                changed(v) => { SpeedRamp.extreme(true, v); root.commit(); }
+            }
+            if root.curved && root.slowest > 0: Param {
+                label: I18n.t("speedRamp.slowest");
+                value <=> root.slowest;
+                minimum: 0.0625;
+                maximum: 0.9;
+                step: 0.01;
+                default-value: 0.5;
+                fmt: ParamFormat.rate;
+                unit: "x";
+                changed(v) => { SpeedRamp.extreme(false, v); root.commit(); }
+            }
+
+            if !root.curved: Param {
                 label: I18n.t("common.rate");
                 value <=> root.speed;
                 // The engine's full range. The track is linear, so the

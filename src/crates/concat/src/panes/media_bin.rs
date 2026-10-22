@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// SPDX-FileCopyrightText: 2026 Jareer and Concat contributors
+// SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
 
 //! The media bin: the project's files as cards, filtered, sorted and
 //! selected.
@@ -199,10 +199,15 @@ impl MediaBin {
                     .filter(|item| self.selected.contains(&item.id))
                     .map(|item| item.id.clone())
                     .collect();
+                // One after another on one lane, as one step - not each at
+                // the playhead on a lane of its own, which stacked them.
                 let start = f64::from(studio.playhead.max(0.0));
-                for media_id in ids {
-                    studio.apply(Command::AddClipAtFirstFree { media_id, start });
-                }
+                studio.apply(Command::AddClipsInSequence {
+                    media_ids: ids,
+                    track_id: None,
+                    start,
+                    ripple: false,
+                });
             }
         }
     }

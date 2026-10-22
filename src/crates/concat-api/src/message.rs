@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// SPDX-FileCopyrightText: 2026 Jareer and Concat contributors
+// SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
 
 //! What crosses the API boundary: a [`Request`] in, a [`Response`] out,
 //! and [`Event`]s along the way.
@@ -46,6 +46,7 @@ pub const API_VERSION: &str = "0.2";
 /// path [`Request::ProjectOpen`] took; the API keeps one session per folder
 /// and a method on a folder that is not open is an error, not a silent
 /// open, so a caller always knows what it is editing.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 #[serde(tag = "method", rename_all_fields = "camelCase")]
 pub enum Request {
@@ -202,7 +203,8 @@ pub enum Request {
     },
 
     /// Renders an open project's active timeline to a file, exactly as
-    /// the window's Export does: cutouts analysed, titles painted, then the
+    /// the window's Export does: cutouts analysed, stabilized clips'
+    /// camera shake measured, titles painted, then the
     /// frame loop and the mix. Returns at once with the job's name; the
     /// render runs on its own thread and reports through [`Event`]s, ending
     /// in [`Event::ExportDone`] or [`Event::ExportFailed`]. One export runs
@@ -219,6 +221,14 @@ pub enum Request {
     /// [`Event::ExportFailed`] carrying [`ErrorCode::Cancelled`].
     #[serde(rename = "export.cancel")]
     ExportCancel {
+        /// The job [`Started`] named.
+        job: String,
+    },
+    /// How a job stands: running and how far along, or how it ended. The
+    /// same news the events carry, for a caller that was not listening
+    /// when it came; the last few finished jobs are remembered.
+    #[serde(rename = "export.status")]
+    ExportStatus {
         /// The job [`Started`] named.
         job: String,
     },
@@ -270,7 +280,8 @@ impl Request {
             | Request::CatalogueList { .. }
             | Request::TemplateList
             | Request::TemplateInstantiate { .. }
-            | Request::ExportCancel { .. } => None,
+            | Request::ExportCancel { .. }
+            | Request::ExportStatus { .. } => None,
         }
     }
 }
@@ -320,6 +331,7 @@ pub struct WindowMark {
 }
 
 /// One template slot and the file that takes it.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Fill {
@@ -331,6 +343,7 @@ pub struct Fill {
 
 /// How an export is rendered. Everything but the output is optional and
 /// defaults to what the window's sheet defaults to.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Clone, PartialEq, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExportSpec {
@@ -400,6 +413,8 @@ pub enum Reply {
     Template(TemplateInfo),
     /// [`Request::ExportRun`]: the job that is now running.
     Started(Started),
+    /// [`Request::ExportStatus`].
+    Job(JobStatus),
     /// [`Request::PreviewFrame`] with an output: the file written.
     Written(Written),
     /// [`Request::PreviewFrame`] without one: the picture itself.
@@ -469,6 +484,73 @@ pub struct Started {
     pub path: String,
     /// The file it will write.
     pub output: String,
+}
+
+/// Where a job is in its life.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum JobState {
+    /// Still working.
+    Running,
+    /// Wrote its file.
+    Done,
+    /// Stopped by [`Request::ExportCancel`].
+    Cancelled,
+    /// Ended without its file; `error` says why.
+    Failed,
+}
+
+/// How one job stands: [`Request::ExportStatus`]'s reply.
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JobStatus {
+    /// The job's name.
+    pub job: String,
+    /// The project it works on.
+    pub path: String,
+    /// The file it writes.
+    pub output: String,
+    /// Running, or how it ended.
+    pub state: JobState,
+    /// What it is doing: "cutout" while masks are found, "stabilize" while
+    /// shake is measured, then "video",
+    /// "audio" and "mux". Absent until it has said.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stage: Option<String>,
+    /// Frames rendered, in the video stage.
+    pub frame: i64,
+    /// Frames in all, in the video stage; 0 until known.
+    pub total: i64,
+    /// How far along the current stage is, `0..=1`; 1 once done.
+    pub fraction: f64,
+    /// The written file's picture size, once done.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+    /// The written file's picture size, once done.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<u32>,
+    /// Why it failed, or that it was cancelled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<ApiError>,
+}
+
+impl JobStatus {
+    /// A job that has just begun.
+    pub fn running(job: &str, path: &str, output: &str) -> JobStatus {
+        JobStatus {
+            job: job.to_owned(),
+            path: path.to_owned(),
+            output: output.to_owned(),
+            state: JobState::Running,
+            stage: None,
+            frame: 0,
+            total: 0,
+            fraction: 0.0,
+            width: None,
+            height: None,
+            error: None,
+        }
+    }
 }
 
 /// A frame handed back without touching the disk.
@@ -662,6 +744,18 @@ pub enum Event {
         /// How far along, `0..=1`.
         fraction: f32,
     },
+    /// A stabilized clip's media is being measured ahead of an export.
+    #[serde(rename = "stabilize.progress")]
+    StabilizeProgress {
+        /// The job.
+        job: String,
+        /// The project folder.
+        path: String,
+        /// The media being measured.
+        media_id: String,
+        /// How far along, `0..=1`.
+        fraction: f32,
+    },
     /// The export moved on.
     #[serde(rename = "export.progress")]
     ExportProgress {
@@ -719,6 +813,7 @@ impl Event {
     pub fn job(&self) -> &str {
         match self {
             Event::CutoutProgress { job, .. }
+            | Event::StabilizeProgress { job, .. }
             | Event::ExportProgress { job, .. }
             | Event::ExportDone { job, .. }
             | Event::ExportFailed { job, .. } => job,

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// SPDX-FileCopyrightText: 2026 Jareer and Concat contributors
+// SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
 
 //! Numbers into words and shapes: timecode, curves, sizes, and the drawn
 //! waveform.
@@ -154,6 +154,46 @@ pub fn eta(seconds: f32) -> String {
     }
 }
 
+/// Seconds as a rough length of time, for an estimate given before the
+/// work starts: "40s", "12 min", "3 h 20 min". Rounded to the unit it is
+/// said in, for the reason [`eta`] is.
+pub fn span(seconds: f64) -> String {
+    if seconds < 59.5 {
+        tf("format.seconds", &[&format!("{:.0}", seconds.max(1.0))])
+    } else if seconds < 3570.0 {
+        tf("format.minutes", &[&format!("{:.0}", seconds / 60.0)])
+    } else {
+        let minutes = (seconds / 60.0).round() as u64;
+        tf("format.hoursMinutes", &[&(minutes / 60), &(minutes % 60)])
+    }
+}
+
+/// A running time the way a video player's corner says it: "0:06",
+/// "12:30", "1:02:03". Whole seconds, rounded down, so a 5.9 second edit
+/// does not claim a sixth.
+pub fn running_time(seconds: f64) -> String {
+    let whole = if seconds.is_finite() {
+        seconds.max(0.0) as u64
+    } else {
+        0
+    };
+    let (hours, minutes, seconds) = (whole / 3600, whole / 60 % 60, whole % 60);
+    if hours > 0 {
+        format!("{hours}:{minutes:02}:{seconds:02}")
+    } else {
+        format!("{minutes}:{seconds:02}")
+    }
+}
+
+/// A frame rate as a person says it: "30 fps", "29.97 fps", "23.976 fps".
+/// The exact fraction is the project's; this is its name.
+pub fn rate_label(num: i64, den: i64) -> String {
+    let fps = num as f64 / den.max(1) as f64;
+    let text = format!("{fps:.3}");
+    let text = text.trim_end_matches('0').trim_end_matches('.');
+    format!("{text} fps")
+}
+
 pub fn hex_of(colour: slint::Color) -> String {
     format!(
         "#{:02x}{:02x}{:02x}",
@@ -241,6 +281,33 @@ pub const WAVE_PITCH: f32 = 3.0;
 /// own; see `media_bin`.
 pub const WAVE_BAR: f32 = 2.0 / 3.0;
 
+/// An envelope already reduced to one peak a bar - a library sound's,
+/// read once at import - drawn the way [`wave_path`] draws a file's: bars
+/// about the centre line, each the leading `bar` of its pitch, in a 1x1
+/// box.
+pub fn bars_path(bars: &[f32], bar: f32) -> String {
+    /// See `wave_path`: silence is a hairline, not a gap.
+    const FLOOR: f32 = 0.024;
+    if bars.is_empty() {
+        return String::new();
+    }
+    let bar = bar.clamp(0.1, 1.0);
+    let pitch = 1.0 / bars.len() as f32;
+    let mut path = String::with_capacity(bars.len() * 56);
+    for (column, amplitude) in bars.iter().enumerate() {
+        let left = column as f32 * pitch;
+        let right = left + pitch * bar;
+        let amplitude = amplitude.clamp(0.0, 1.0).max(FLOOR);
+        let top = 0.5 - amplitude / 2.0;
+        let bottom = 0.5 + amplitude / 2.0;
+        path.push_str(&format!(
+            "M {left:.4} {top:.4} L {right:.4} {top:.4} \
+             L {right:.4} {bottom:.4} L {left:.4} {bottom:.4} Z "
+        ));
+    }
+    path
+}
+
 /// How many bars a span of `seconds` gets at `seconds_per_pixel`: one a
 /// [`WAVE_PITCH`], rounded up to the next sixteen so a zoom rebuilds the
 /// path at each step of that and not at every pixel, held to what
@@ -272,8 +339,10 @@ pub fn when_phrase(opened_at_millis: u64) -> String {
         t("format.justNow")
     } else if hours < 1 {
         tf("format.minutesAgo", &[&minutes])
+    } else if hours < 2 {
+        t("format.anHourAgo")
     } else if days < 1 {
-        t("format.today")
+        tf("format.hoursAgo", &[&hours])
     } else if days == 1 {
         t("format.yesterday")
     } else if days < 30 {
@@ -562,5 +631,28 @@ mod tests {
         assert_eq!(when_phrase(now), "just now");
         assert_eq!(when_phrase(now - 86_400_000 - 1000), "yesterday");
         assert_eq!(when_phrase(now - 3 * 86_400_000), "3 days ago");
+    }
+
+    #[test]
+    fn a_running_time_reads_as_a_player_says_it() {
+        assert_eq!(running_time(0.0), "0:00");
+        assert_eq!(running_time(5.9), "0:05");
+        assert_eq!(running_time(754.0), "12:34");
+        assert_eq!(running_time(3725.0), "1:02:05");
+        assert_eq!(running_time(f64::NAN), "0:00");
+        assert_eq!(rate_label(30, 1), "30 fps");
+        assert_eq!(rate_label(30000, 1001), "29.97 fps");
+        assert_eq!(rate_label(24000, 1001), "23.976 fps");
+    }
+
+    #[test]
+    fn an_estimate_is_said_in_the_unit_that_fits_it() {
+        let _english = crate::i18n::language_lock();
+        assert_eq!(span(0.2), "1s");
+        assert_eq!(span(42.4), "42s");
+        assert_eq!(span(59.6), "1 min");
+        assert_eq!(span(12.0 * 60.0 + 10.0), "12 min");
+        assert_eq!(span(3600.0), "1 h 0 min");
+        assert_eq!(span(3.0 * 3600.0 + 20.0 * 60.0), "3 h 20 min");
     }
 }

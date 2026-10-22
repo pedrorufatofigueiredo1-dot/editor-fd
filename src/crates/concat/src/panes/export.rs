@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// SPDX-FileCopyrightText: 2026 Jareer and Concat contributors
+// SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
 
 //! The export sheet: the form, the running render, and the result.
 //!
@@ -21,9 +21,7 @@ use crate::host::{on_ui, spawn};
 use crate::i18n::{self, t, tf};
 use crate::panes::Msg;
 use crate::platform;
-use crate::studio::{
-    AUDIO_BPS, EXPORT_CRF, EXPORT_SHORT_SIDES, EXPORT_TIERS, RATES, Studio, home_folder,
-};
+use crate::studio::{AUDIO_BPS, EXPORT_CRF, EXPORT_SHORT_SIDES, RATES, Studio, home_folder};
 use crate::ui::{ExportData, ExportPhase};
 use slint::{ModelRc, SharedString, VecModel};
 
@@ -35,21 +33,13 @@ pub enum ExportMsg {
     /// The sheet is dismissed.
     Close,
     NameEdited(String),
-    ResolutionChanged(i32),
     RateChanged(i32),
-    QualityChanged(i32),
     CodecChanged(i32),
     TenBitChanged(bool),
     /// For an HDR timeline: written HDR (true), or tone-mapped to SDR.
     HdrChanged(bool),
-    /// Limited or full range, as a row of the Advanced section's list.
-    ColorRangeChanged(i32),
-    /// The Advanced section is opened or closed.
-    AdvancedToggled(bool),
-    /// VBR or CBR.
-    RateModeChanged(i32),
-    /// The target bitrate field: digits only, in kbps.
-    BitrateChanged(String),
+    /// The target bitrate field, in Mbps: the bitrate becomes a custom one.
+    BitrateChanged(f32),
     /// Back to the form after a finished or failed render.
     Again,
     /// Pick the destination folder.
@@ -83,22 +73,15 @@ pub struct ExportPane {
     pub folder: String,
     pub resolution: usize,
     pub rate: usize,
-    pub quality: usize,
+    /// The bitrate is the typed one, not the recommended one for the
+    /// frame and the rate.
+    pub custom: bool,
     /// Index into `VideoCodec::ALL`.
     pub codec: usize,
     pub ten_bit: bool,
     /// An HDR timeline written tone-mapped to SDR rather than as it is.
     pub sdr: bool,
-    /// Index into `ColorRange::ALL`: 0 limited, 1 full. Read only while
-    /// the Advanced section is open, like the bitrate.
-    /// https://github.com/jub0t/Concat/issues/103
-    pub color_range: usize,
-    /// The Advanced section is open: bitrate controls show, and the size
-    /// estimate reads the chosen bitrate.
-    pub advanced: bool,
-    /// Index into `RateMode::ALL`.
-    pub rate_mode: usize,
-    /// Target bitrate in kbps, used when `rate_mode` is CBR.
+    /// The typed bitrate in kbps, the one written when `custom`.
     pub bitrate: u32,
     pub phase: ExportPhase,
     pub progress: f32,
@@ -115,16 +98,20 @@ impl Default for ExportPane {
         Self {
             open: false,
             name: "Untitled".into(),
-            folder: home_folder("Movies"),
+            // An iPhone's sandbox has no Movies the app may make, as it has
+            // no Desktop (#299); Documents is the folder Files shows, and a
+            // finished export goes on to Photos from there.
+            folder: home_folder(if cfg!(target_os = "ios") {
+                "Documents/Exports"
+            } else {
+                "Movies"
+            }),
             resolution: 2,
             rate: 0,
-            quality: 1,
+            custom: false,
             codec: 0,
             ten_bit: false,
             sdr: false,
-            color_range: 0,
-            advanced: false,
-            rate_mode: 0,
             bitrate: 8000,
             phase: ExportPhase::Idle,
             progress: 0.0,
@@ -154,18 +141,9 @@ impl ExportPane {
             }
             ExportMsg::Close => self.open = false,
             ExportMsg::NameEdited(name) => self.name = name,
-            ExportMsg::ResolutionChanged(index) => {
-                // Only the timeline's own rung is taken; the sheet greys the
-                // rest, and this is the same rule for a caller that did not.
-                let index = index.max(0) as usize;
-                if index == Self::own_rung(studio) {
-                    self.resolution = index;
-                }
-            }
             ExportMsg::RateChanged(index) => {
                 self.rate = (index.max(0) as usize).min(Self::rates(studio).len() - 1);
             }
-            ExportMsg::QualityChanged(index) => self.quality = (index.max(0) as usize).min(2),
             // A codec this device cannot encode is not taken: the picker
             // says so under it, and the choice before stands.
             ExportMsg::CodecChanged(index) => {
@@ -176,15 +154,10 @@ impl ExportPane {
             }
             ExportMsg::TenBitChanged(on) => self.ten_bit = on,
             ExportMsg::HdrChanged(on) => self.sdr = !on,
-            ExportMsg::ColorRangeChanged(index) => {
-                self.color_range = (index.max(0) as usize).min(ColorRange::ALL.len() - 1);
-            }
-            ExportMsg::AdvancedToggled(on) => self.advanced = on,
-            ExportMsg::RateModeChanged(index) => self.rate_mode = index.max(0) as usize,
-            ExportMsg::BitrateChanged(text) => {
-                let digits: String = text.chars().filter(|c| c.is_ascii_digit()).collect();
-                if let Ok(value) = digits.parse::<u32>() {
-                    self.bitrate = value.clamp(100, 200_000);
+            ExportMsg::BitrateChanged(mbps) => {
+                if mbps.is_finite() {
+                    self.bitrate = ((mbps * 1000.0).round() as u32).clamp(500, 400_000);
+                    self.custom = true;
                 }
             }
             ExportMsg::Again => {
@@ -352,24 +325,38 @@ impl ExportPane {
         Self::frame_for(studio, short)
     }
 
-    /// A rough size of the file at one quality tier, in bytes.
-    pub fn size_bytes(&self, studio: &Studio, tier: usize) -> f32 {
+    /// The bitrate the file is written at, in kbps: the typed one, or the
+    /// one YouTube asks uploads at for the frame - 5 Mbps at 720p, 8 at
+    /// 1080p, 16 at 1440p and 40 at 4K, half again above 30 fps - which
+    /// every other platform takes too, less for HEVC and AV1, which spend
+    /// fewer bits on the same picture, and a quarter more at ten bits.
+    /// Rounded to half a megabit, as a person would say it. The
+    /// recommended one follows the frame, the rate and the codec until a
+    /// bitrate is typed.
+    pub fn target_kbps(&self, studio: &Studio) -> u32 {
+        if self.custom {
+            return self.bitrate;
+        }
         let (width, height) = self.size(studio);
         let (num, den) = self.rate(studio);
-        let rate = num as f32 / den as f32;
-        let pixels = (width as f32 * height as f32) / (1920.0 * 1080.0);
-        // In CBR the bitrate is the number, not the tier; the pixels, rate
-        // and codec factors no longer apply because the encoder is pinned.
-        let video = if self.advanced && self.rate_mode == 1 {
-            self.bitrate as f32 * 1000.0
-        } else {
-            EXPORT_TIERS[tier.min(2)]
-                * 1_000_000.0
-                * pixels
-                * (rate / 30.0)
-                * self.codec(studio).size_factor()
-                * if self.deep(studio) { 1.05 } else { 1.0 }
+        let fps = num as f32 / den.max(1) as f32;
+        let base = match width.min(height) {
+            0..=480 => 2_500.0,
+            481..=720 => 5_000.0,
+            721..=1080 => 8_000.0,
+            1081..=1440 => 16_000.0,
+            _ => 40_000.0,
         };
+        let motion = if fps > 30.5 { 1.5 } else { 1.0 };
+        let deep = if self.deep(studio) { 1.25 } else { 1.0 };
+        let kbps = base * motion * self.codec(studio).size_factor() * deep;
+        ((kbps / 500.0).round() * 500.0).max(500.0) as u32
+    }
+
+    /// The file's size, in bytes: the bitrate is an average the encoder
+    /// keeps to, so this is what is written, give or take.
+    pub fn size_bytes(&self, studio: &Studio) -> f32 {
+        let video = self.target_kbps(studio) as f32 * 1000.0;
         (video + AUDIO_BPS) * studio.duration().max(1.0) / 8.0
     }
 
@@ -406,17 +393,6 @@ impl ExportPane {
     /// switch asks and the codec can be written that deep here.
     pub fn deep(&self, studio: &Studio) -> bool {
         self.hdr(studio) || (self.ten_bit && self.codec(studio).ten_bit_available())
-    }
-
-    /// The range the file is written in: the Advanced section's choice
-    /// while the section is open, video range otherwise - so a sheet with
-    /// Advanced off exports what it always did.
-    pub fn color_range(&self) -> ColorRange {
-        if self.advanced {
-            ColorRange::ALL[self.color_range.min(ColorRange::ALL.len() - 1)]
-        } else {
-            ColorRange::Limited
-        }
     }
 
     /// Starts the render on a worker, once the name is a file's and no
@@ -466,21 +442,16 @@ impl ExportPane {
         };
         let spec = ExportSpec {
             output: output.clone(),
-            crf: EXPORT_CRF[self.quality.min(2)],
+            // Unused at an average bitrate; the quality the encoder falls
+            // back on were it ever not given one.
+            crf: EXPORT_CRF,
             preset: "veryfast".into(),
             codec: self.codec(studio),
             ten_bit: self.deep(studio),
-            rate_mode: if self.advanced && self.rate_mode == 1 {
-                concat_media::RateMode::Cbr
-            } else {
-                concat_media::RateMode::Vbr
-            },
-            bitrate_kbps: if self.advanced && self.rate_mode == 1 {
-                self.bitrate
-            } else {
-                0
-            },
-            color_range: self.color_range(),
+            rate_mode: concat_media::RateMode::Average,
+            bitrate_kbps: self.target_kbps(studio),
+            // Video range, what every player and every platform expects.
+            color_range: ColorRange::Limited,
             hdr: self.hdr(studio),
         };
         let (frame_w, frame_h) = studio.output_size();
@@ -589,26 +560,6 @@ impl ExportPane {
                     .collect();
                 ModelRc::new(VecModel::from(sizes))
             },
-            resolution_details: {
-                let names: Vec<SharedString> = Self::ladder(studio)
-                    .iter()
-                    .map(|rung| match rung {
-                        2160 => "4K".into(),
-                        1440 => "QHD".into(),
-                        1080 => "1080p".into(),
-                        720 => "720p".into(),
-                        _ => t("export.timelineSize").into(),
-                    })
-                    .collect();
-                ModelRc::new(VecModel::from(names))
-            },
-            resolution_disabled: {
-                let own = Self::own_rung(studio);
-                let off: Vec<bool> = (0..Self::ladder(studio).len())
-                    .map(|rung| rung != own)
-                    .collect();
-                ModelRc::new(VecModel::from(off))
-            },
             rate: self.rate as i32,
             rates: {
                 let names: Vec<SharedString> = Self::rates(studio)
@@ -623,7 +574,6 @@ impl ExportPane {
                 details[0] = t("export.timelineSize").into();
                 ModelRc::new(VecModel::from(details))
             },
-            quality: self.quality as i32,
             codec: concat_media::VideoCodec::ALL
                 .iter()
                 .position(|codec| *codec == self.codec(studio))
@@ -642,10 +592,7 @@ impl ExportPane {
                 _ => "HDR (HLG)",
             }
             .into(),
-            color_range: self.color_range as i32,
-            advanced: self.advanced,
-            rate_mode: self.rate_mode as i32,
-            bitrate: self.bitrate as i32,
+            target: self.target_kbps(studio) as f32 / 1000.0,
             encoding: {
                 // "HEVC 10-bit · hardware": the standard, the depth when it
                 // is the deeper one, and whether the platform's own encoder
@@ -664,18 +611,13 @@ impl ExportPane {
                         .to_owned(),
                     );
                 }
-                if self.color_range() == ColorRange::Full {
-                    words.push(t("export.fullRange"));
-                }
                 if codec.hardware_encoded(true, self.deep(studio)) {
                     words.push(format!("· {}", t("export.hardware")));
                 }
                 words.join(" ")
             }
             .into(),
-            size_high: bytes(self.size_bytes(studio, 0)).into(),
-            size_balanced: bytes(self.size_bytes(studio, 1)).into(),
-            size_small: bytes(self.size_bytes(studio, 2)).into(),
+            size_chosen: bytes(self.size_bytes(studio)).into(),
             phase: self.phase,
             progress: self.progress,
             stage: self.stage.as_str().into(),
@@ -690,7 +632,7 @@ impl ExportPane {
                 slint::SharedString::new()
             },
             message: self.message.as_str().into(),
-            done_size: bytes(self.size_bytes(studio, self.quality)).into(),
+            done_size: bytes(self.size_bytes(studio)).into(),
             empty: clips == 0,
         }
     }

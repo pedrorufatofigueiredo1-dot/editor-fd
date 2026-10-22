@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// SPDX-FileCopyrightText: 2026 Jareer and Concat contributors
+// SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
 
 //! The timeline's view: where it is looking, how close, with which tool,
 //! and what the lanes know about a track that the document does not.
@@ -95,6 +95,8 @@ pub enum TimelineMsg {
     /// The tray's preview axis button: the monitor follows the pointer.
     /// A preference, remembered.
     TrimFollowChanged(bool),
+    /// The tray's meter button: the VU meters shown or put away.
+    MetersShownChanged(bool),
     PreviewAxisChanged(bool),
     /// The button's menu: whether the sound under the pointer plays too.
     PreviewAxisAudioChanged(bool),
@@ -178,6 +180,11 @@ impl TimelinePane {
             TimelineMsg::TrimFollowChanged(on) => {
                 studio.prefs.trim_follow = on;
                 studio.prefs.save(&studio.host.dirs);
+            }
+            TimelineMsg::MetersShownChanged(on) => {
+                studio.prefs.vu_meters = Some(on);
+                studio.prefs.save(&studio.host.dirs);
+                studio.wake_meters();
             }
             TimelineMsg::PreviewAxisChanged(on) => {
                 studio.prefs.preview_axis = on;
@@ -420,6 +427,46 @@ mod tests {
         assert_eq!(frame_floor(-3.0, 30.0), 0.0);
         assert_eq!(frame_floor(0.123, 0.0), 0.123);
         assert_eq!(frame_floor(0.123, f32::NAN), 0.123);
+    }
+
+    /// What the lanes' pinch sends: Slint's scale since the fingers landed,
+    /// turned into the step since the last update.
+    fn pinch(view: &mut TimelinePane, scales: &[f32], anchor: f32) {
+        let mut last = 1.0;
+        for &scale in scales {
+            view.zoom(last / scale, anchor);
+            view.recentre(3.0);
+            last = scale;
+        }
+    }
+
+    #[test]
+    fn a_pinch_zooms_by_its_whole_scale_about_the_fingers() {
+        // On a desk: the instant between the fingers stays between them.
+        let mut view = pane(1000.0, 10.0, 0.1);
+        let before = (20.0 - view.scroll_left) / view.seconds_per_pixel;
+        pinch(&mut view, &[1.1, 1.3, 1.25, 2.0], 20.0);
+        assert!(
+            (view.seconds_per_pixel - 0.05).abs() < 1e-6,
+            "{}",
+            view.seconds_per_pixel
+        );
+        let after = (20.0 - view.scroll_left) / view.seconds_per_pixel;
+        assert!((before - after).abs() < 1e-2, "{before} {after}");
+        // Spread past the closest zoom and back: held at the limit, and
+        // turning back zooms out at once rather than after a dead stretch.
+        pinch(&mut view, &[1e4, 5e3], 20.0);
+        assert!(view.seconds_per_pixel > ZOOM_IN_LIMIT);
+        assert!((view.seconds_per_pixel - 2.0 * ZOOM_IN_LIMIT).abs() < 1e-6);
+
+        // On a phone: whatever the fingers' middle, the playhead stays at
+        // the lanes' middle, as the zoom buttons keep it.
+        let mut phone = pane(400.0, 0.0, 0.05);
+        phone.centred = true;
+        phone.recentre(3.0);
+        pinch(&mut phone, &[0.8, 0.5], 9.0);
+        assert!((phone.seconds_per_pixel - 0.1).abs() < 1e-6);
+        assert!(((3.0 - phone.scroll_left) / phone.seconds_per_pixel - 200.0).abs() < 1e-3);
     }
 
     #[test]

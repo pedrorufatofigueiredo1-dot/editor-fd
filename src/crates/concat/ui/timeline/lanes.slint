@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// SPDX-FileCopyrightText: 2026 Jareer and Concat contributors
+// SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
 
 import { Wave } from "../primitives/wave.slint";
 import { I18n } from "../i18n.slint";
@@ -171,9 +171,19 @@ component Clip inherits Rectangle {
     in property <TimelineTool> tool;
     /// how close to an edge counts as grabbing it
     in property <length> edge-grab: 6px;
+    /// Driven by a finger: a phone. A press is then a tap, a swipe or a
+    /// hold - see the gesture below.
+    in property <bool> finger: false;
 
     /// A press landed: the caller resolves the selection before any drag.
     callback pressed(additive: bool, edge: int);
+    /// Under a finger, a press that is not yet anything, at a window
+    /// position; then where it has got to; then its release, true when it
+    /// was a tap. The lanes treat it as a press on their floor: a swipe
+    /// along the cut scrubs, one down the stack scrolls it.
+    callback finger-pressed(x: length, y: length, id: int);
+    callback finger-swiped(x: length, y: length);
+    callback finger-let-go(id: int) -> bool;
     /// A press with the split tool: cut here, `x` into the clip.
     callback split-at(x: length);
     /// The volume line dragged to `gain` - linear, 1 being unity, 2 the
@@ -548,8 +558,12 @@ component Clip inherits Rectangle {
         width: parent.width;
         height: parent.height;
         border-radius: Theme.r-sm;
-        border-width: root.item.selected ? 2px : 1px;
-        border-color: root.item.selected ? Theme.accent : root.mark;
+        border-width: touch.lifted ? 3px : root.item.selected ? 2px : 1px;
+        border-color: root.item.selected || touch.lifted ? Theme.accent : root.mark;
+        // Picked up by a hold: it rises off the lane until it is let go.
+        drop-shadow-blur: touch.lifted ? 10px : 0px;
+        drop-shadow-offset-y: touch.lifted ? 3px : 0px;
+        drop-shadow-color: #00000080;
     }
 
     // ── locked ───────────────────────────────────────────────────────────
@@ -612,10 +626,40 @@ component Clip inherits Rectangle {
                 self.origin-y = self.absolute-position.y + self.mouse-y;
                 self.travelled = false;
                 self.on-edge = root.edge-at >= 0;
+                // A finger on a phone moved the clip by brushing it: a
+                // wobble of a few pixels was a move with an undo step, and
+                // a swipe meant to scroll the lanes dragged the clip
+                // instead. Under a finger a press is nothing yet - a tap
+                // selects, a swipe scrolls, and only a hold picks the clip
+                // up to move, as in CapCut. An edge of the selected clip
+                // still trims straight away: it was aimed at.
+                if (root.finger && !(self.on-edge && root.item.selected)) {
+                    self.held = true;
+                    self.lifted = false;
+                    root.finger-pressed(self.origin-x, self.origin-y, event.touch-finger-id);
+                    hold.running = false;
+                    hold.running = true;
+                    return;
+                }
+                self.held = false;
                 root.pressed(event.modifiers.shift || event.modifiers.control
                     || event.modifiers.meta, root.edge-at);
             } else if (event.kind == PointerEventKind.up
                 || event.kind == PointerEventKind.cancel) {
+                hold.running = false;
+                if (self.held) {
+                    self.held = false;
+                    if (self.lifted) {
+                        self.lifted = false;
+                        root.released();
+                    } else if (root.finger-let-go(event.touch-finger-id)
+                        && event.kind == PointerEventKind.up) {
+                        // A tap: selected, and nothing moved.
+                        root.pressed(false, -1);
+                        root.released();
+                    }
+                    return;
+                }
                 // Only a release ends it. Slint delivers `move` here too, so a
                 // plain `else` would end the gesture the moment it began.
                 root.released();
@@ -627,6 +671,21 @@ component Clip inherits Rectangle {
         }
 
         moved => {
+            if (self.held) {
+                let x = self.absolute-position.x + self.mouse-x;
+                let y = self.absolute-position.y + self.mouse-y;
+                if (self.lifted) {
+                    root.pointer-at(self.mouse-x);
+                    root.dragged((x - self.origin-x) / root.px-per-second, y - self.origin-y);
+                    return;
+                }
+                // Past the touch slop it is a swipe, and never a hold.
+                if (Math.abs(x - self.origin-x) > 8px || Math.abs(y - self.origin-y) > 8px) {
+                    hold.running = false;
+                }
+                root.finger-swiped(x, y);
+                return;
+            }
             // Past a few pixels it is a drag, not a click, and the playhead
             // stays where it was. Short of them it is nothing at all: a
             // hand that shook on a click reported a move of a pixel or two,
@@ -649,6 +708,25 @@ component Clip inherits Rectangle {
         property <length> origin-y;
         property <bool> travelled;
         property <bool> on-edge;
+        /// A finger's press, until it lets go: a tap, a swipe or a hold.
+        property <bool> held;
+        /// Held long enough without travelling: the clip is picked up, and
+        /// moves with the finger.
+        out property <bool> lifted;
+    }
+
+    // A hold's beat: Android's long press is 400 ms, CapCut's about the
+    // same. Stopped by a swipe or a release before it.
+    hold := Timer {
+        interval: 400ms;
+        running: false;
+        triggered => {
+            self.running = false;
+            if (touch.held && !touch.lifted) {
+                touch.lifted = true;
+                root.pressed(false, -1);
+            }
+        }
     }
 
     // ── the volume line ───────────────────────────────────────────────────
@@ -1219,6 +1297,8 @@ export component Lanes inherits Rectangle {
     /// A marker right-clicked: Rust fills the menu and bumps the token, as
     /// for a clip.
     callback marker-context(id: string, clip-id: string);
+    /// A ruler diamond was clicked: the Keyframes pane, if it is not up.
+    callback key-mark-opened();
     /// The preview axis: the pointer is over the lanes at this instant,
     /// and then - a beat after it last was - it is not.
     callback hovered(seconds: float);
@@ -1308,6 +1388,12 @@ export component Lanes inherits Rectangle {
     in property <[AiRangeData]> ai-ranges;
     callback track-scrolled(pixels: length);
     callback zoomed(factor: float, anchor-seconds: float);
+    /// A finger landed on the lanes, or two began a pinch: whatever was
+    /// still gliding stops. Only with `finger`.
+    callback finger-held();
+    /// The finger that dragged the lanes along the cut let go, moving:
+    /// they carry on at its speed. Only with `finger`.
+    callback finger-lifted();
 
     /// A drag from the library is over the lanes at this moment and this
     /// place. Asked on every move of it, because the answer — the ghost below
@@ -1339,8 +1425,12 @@ export component Lanes inherits Rectangle {
     property <length> finger-x;
     property <length> finger-y;
     property <length> finger-last-y;
+    /// Which finger it is, as Slint numbers them; see `finger-up`.
+    property <int> finger-id;
 
-    function finger-down(x: length, y: length) {
+    function finger-down(x: length, y: length, id: int) {
+        root.finger-held();
+        root.finger-id = id;
         root.finger-axis = 0;
         root.finger-playhead = root.playhead;
         root.finger-x = x;
@@ -1351,9 +1441,11 @@ export component Lanes inherits Rectangle {
     /// job: the floor scrolls the stack, the ruler does not.
     function finger-moved(x: length, y: length, down-too: bool) {
         if (root.finger-axis == 0) {
-            if (Math.abs(x - root.finger-x) > 6px) {
+            // Android's touch slop: 8 dp, which Slint's logical pixels
+            // are on a phone.
+            if (Math.abs(x - root.finger-x) > 8px) {
                 root.finger-axis = 1;
-            } else if (down-too && Math.abs(y - root.finger-y) > 6px) {
+            } else if (down-too && Math.abs(y - root.finger-y) > 8px) {
                 root.finger-axis = 2;
             }
         }
@@ -1366,6 +1458,23 @@ export component Lanes inherits Rectangle {
             root.track-scrolled(root.finger-last-y - y);
             root.finger-last-y = y;
         }
+    }
+    /// The surface the finger pressed has been let go of, by finger `id`;
+    /// true when that was a tap. A drag along the cut is thrown, and the
+    /// lanes glide on from where it let go.
+    ///
+    /// A second finger landing lets go of the first too: Slint releases
+    /// the first so a pinch can begin, and numbers that release with the
+    /// second finger's id - which is how it is told from a real lift, and
+    /// why it is neither a tap nor a throw.
+    function finger-up(id: int) -> bool {
+        if (id != root.finger-id) {
+            return false;
+        }
+        if (root.finger-axis == 1) {
+            root.finger-lifted();
+        }
+        return root.finger-axis == 0;
     }
 
     // ── scrolling at the edge ─────────────────────────────────────────
@@ -1452,6 +1561,34 @@ export component Lanes inherits Rectangle {
 
     background: Theme.lane;
     clip: true;
+
+    // Two fingers pinched, or a trackpad's pinch: the zoom, through the
+    // same `zoomed` the wheel and the buttons use, so it has their limits.
+    // Slint numbers the gesture as one scale since it began; each update
+    // is turned into the step since the last one, so the zoom moves with
+    // the fingers whatever it was when they landed. About the fingers'
+    // middle on a desk; a phone's lanes hold the playhead at theirs, and
+    // zoom about that (see `TimelinePane::recentre`).
+    //
+    // Under the wheel, not around it: every surface there turns a pinch
+    // down, and a pinch turned down falls through to what is beneath. A
+    // clip or the floor still has the first finger until the second lands.
+    pinch := ScaleRotateGestureHandler {
+        property <float> last-scale: 1;
+
+        started => {
+            self.last-scale = 1;
+            if (root.finger) {
+                root.finger-held();
+            }
+        }
+        updated => {
+            if (self.scale > 0 && self.last-scale > 0) {
+                root.zoomed(self.last-scale / self.scale, root.seconds-at(self.center.x));
+                self.last-scale = self.scale;
+            }
+        }
+    }
 
     // Ancestor of everything below, so a wheel the clips do not handle bubbles
     // up to here. A sibling would not see it.
@@ -1622,7 +1759,7 @@ export component Lanes inherits Rectangle {
                     self.to-x = self.mouse-x;
                     self.to-y = self.mouse-y;
                     if (root.finger) {
-                        root.finger-down(self.mouse-x, self.mouse-y);
+                        root.finger-down(self.mouse-x, self.mouse-y, event.touch-finger-id);
                     } else {
                         self.drawing = true;
                     }
@@ -1670,8 +1807,8 @@ export component Lanes inherits Rectangle {
                             root.asked = true;
                             root.floor-context();
                         }
-                    } else if (root.finger && root.finger-axis == 0
-                        && event.kind == PointerEventKind.up) {
+                    } else if (root.finger && event.kind == PointerEventKind.up
+                        && root.finger-up(event.touch-finger-id)) {
                         // A tap on an empty lane: the playhead goes there,
                         // and the empty band a press that never moved would
                         // have closed clears the selection.
@@ -1716,6 +1853,7 @@ export component Lanes inherits Rectangle {
             viewport-width: parent.width;
             tool: root.tool;
             edge-grab: root.edge-grab;
+            finger: root.finger;
             // Read back through the lane the clip sits on rather than carried
             // on the clip: locking is a property of the lane, and copying it
             // onto every clip would be one more thing to keep in step.
@@ -1728,6 +1866,9 @@ export component Lanes inherits Rectangle {
             // clip by the last drag's distance.
             // https://github.com/jub0t/Concat/issues/247
             pressed(additive, edge) => {
+                if (root.finger) {
+                    root.finger-held();
+                }
                 root.press-scroll = root.scroll-left;
                 root.drag-seconds = 0;
                 root.drag-pixels = 0;
@@ -1737,6 +1878,9 @@ export component Lanes inherits Rectangle {
             split-at(x) => {
                 root.clip-split(entry.id, entry.start + x / root.px-per-second);
             }
+            finger-pressed(x, y, id) => { root.finger-down(x, y, id); }
+            finger-swiped(x, y) => { root.finger-moved(x, y, true); }
+            finger-let-go(id) => { return root.finger-up(id); }
             volume-dragged(gain) => { root.clip-volume(entry.id, gain); }
             // The clip reports its delta from the press; a view that has
             // scrolled since then is added, so the clip stays under the
@@ -1754,7 +1898,17 @@ export component Lanes inherits Rectangle {
             }
             // Click anywhere on the timeline and the playhead goes there,
             // a clip included: it is selected and the playhead lands on it.
-            clicked(x) => { root.scrubbed(Math.max(0, root.seconds-at(self.x + x))); }
+            // Not under a finger: the lanes are held at the playhead there,
+            // and a tap that moved it would slide the whole cut half a
+            // screen to bring the clip to the middle - the clip tapped
+            // would leap away from the thumb that tapped it. A tap selects;
+            // the lanes stay where they were, the way they do in every
+            // phone editor.
+            clicked(x) => {
+                if (!root.finger) {
+                    root.scrubbed(Math.max(0, root.seconds-at(self.x + x)));
+                }
+            }
             hovered(x) => { root.hover-at(self.x + x); }
             hover-ended => { root.hover-off(); }
             context-requested => {
@@ -1996,9 +2150,9 @@ export component Lanes inherits Rectangle {
                         // The ruler slides with the lanes under a finger;
                         // a tap on it goes to the instant tapped.
                         if (event.kind == PointerEventKind.down) {
-                            root.finger-down(self.mouse-x, self.mouse-y);
+                            root.finger-down(self.mouse-x, self.mouse-y, event.touch-finger-id);
                         } else if (event.kind == PointerEventKind.up
-                            && root.finger-axis == 0) {
+                            && root.finger-up(event.touch-finger-id)) {
                             root.scrubbed(Math.max(0, root.seconds-at(self.mouse-x)));
                         }
                         return;
@@ -2024,72 +2178,92 @@ export component Lanes inherits Rectangle {
                     }
                 }
             }
+        }
 
-            // The selected clip's keys, as diamonds on the ruler's floor:
-            // clicked to go to one, dragged to move every key at that
-            // instant. Only while one clip is selected (#188).
-            for mark in root.key-marks: TouchArea {
-                property <float> drag-to: mark;
-                property <bool> dragging;
+        // The selected clip's keys, as diamonds on the ruler's floor:
+        // clicked to go to one, dragged to move every key at that instant.
+        // Only while one clip is selected (#188). Centred on the ruler's
+        // foot, half over the lanes, so the diamond sits on the line it
+        // marks a moment of; large enough to see and to hit, a finger's
+        // size under a finger. Over the ruler, not inside it: the ruler
+        // clips, and cut each diamond's lower half off (#490).
+        for mark in root.key-marks: key := TouchArea {
+            property <float> drag-to: mark;
+            property <bool> dragging;
+            property <length> size: root.finger ? 32px : 22px;
+            property <length> core: root.finger ? 16px : 14px;
+            /// Pointed at, held, or the key the playhead is on: ringed,
+            /// a clear gap and then the diamond's own colour around it.
+            property <bool> on: self.has-hover || self.dragging
+                || Math.abs(root.playhead - mark) * root.px-per-second < 1px;
 
-                x: root.at(self.dragging ? self.drag-to : mark) - 7px;
-                y: root.ruler-height - 14px;
-                width: 14px;
-                height: 14px;
-                mouse-cursor: pointer;
+            x: root.at(self.dragging ? self.drag-to : mark) - self.size / 2;
+            y: root.ruler-height - self.size / 2;
+            width: self.size;
+            height: self.size;
+            mouse-cursor: pointer;
 
-                Path {
-                    x: 2px;
-                    y: 2px;
-                    width: 10px;
-                    height: 10px;
-                    viewbox-width: 10;
-                    viewbox-height: 10;
-                    commands: "M 5 0.75 L 9.25 5 L 5 9.25 L 0.75 5 Z";
-                    fill: Theme.accent;
-                    stroke: Theme.ruler;
-                    stroke-width: 1px;
-                }
-
-                moved => {
-                    if (self.pressed) {
-                        self.dragging = true;
-                        // On the frame grid, so a key moved here is one the
-                        // playhead can land on.
-                        self.drag-to = Math.max(0, Math.round(
-                            root.seconds-at(root.at(mark) + self.mouse-x - self.pressed-x)
-                                * root.rate) / root.rate);
-                    }
-                }
-                pointer-event(event) => {
-                    if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
-                        if (self.dragging && Math.abs(self.drag-to - mark) > 0.0005) {
-                            root.key-mark-moved(mark, self.drag-to);
-                        } else if (event.kind == PointerEventKind.up) {
-                            root.scrubbed(mark);
-                        }
-                        self.dragging = false;
-                    }
-                }
+            if key.on: Path {
+                x: (key.width - self.width) / 2;
+                y: (key.height - self.height) / 2;
+                width: key.core + 8px;
+                height: key.core + 8px;
+                viewbox-width: 10;
+                viewbox-height: 10;
+                commands: "M 5 0.5 L 9.5 5 L 5 9.5 L 0.5 5 Z";
+                stroke: Theme.accent;
+                stroke-width: 1.5px;
+            }
+            Path {
+                x: (key.width - self.width) / 2;
+                y: (key.height - self.height) / 2;
+                width: key.core;
+                height: key.core;
+                viewbox-width: 10;
+                viewbox-height: 10;
+                commands: "M 5 0.75 L 9.25 5 L 5 9.25 L 0.75 5 Z";
+                fill: Theme.accent;
+                stroke: Theme.ruler;
+                stroke-width: 1px;
             }
 
-            // The timeline's markers, as flags along the ruler's top:
-            // above the scrub strip, so a press on one is the marker's.
-            for mark in root.markers: MarkerFlag {
-                x: root.at(self.dragging ? root.marker-at(mark.seconds, self.drag-dx)
-                    : mark.seconds) - self.width / 2;
-                y: 1px;
-                visible: mark.row < 0 && self.x + self.width > 0 && self.x < parent.width;
-                tint: mark.color;
-                name: mark.name;
-
-                picked => { root.scrubbed(mark.seconds); }
-                dropped(dx) => {
-                    root.marker-moved(mark.id, mark.clip-id, root.marker-at(mark.seconds, dx));
+            moved => {
+                if (self.pressed) {
+                    self.dragging = true;
+                    self.drag-to = Math.max(0,
+                        root.seconds-at(root.at(mark) + self.mouse-x - self.pressed-x));
                 }
-                edit => { root.marker-edit(mark.id, mark.clip-id); }
-                context => { root.marker-menu(mark.id, mark.clip-id); }
             }
+            pointer-event(event) => {
+                if (event.kind == PointerEventKind.up || event.kind == PointerEventKind.cancel) {
+                    if (self.dragging && Math.abs(self.drag-to - mark) > 0.0005) {
+                        root.key-mark-moved(mark, self.drag-to);
+                    } else if (event.kind == PointerEventKind.up) {
+                        root.scrubbed(mark);
+                        root.key-mark-opened();
+                    }
+                    self.dragging = false;
+                }
+            }
+        }
+
+        // The timeline's markers, as flags along the ruler's top: after the
+        // ruler, so they are drawn over it and a press on one is the
+        // marker's, not the scrub strip's.
+        for mark in root.markers: MarkerFlag {
+            x: root.at(self.dragging ? root.marker-at(mark.seconds, self.drag-dx)
+                : mark.seconds) - self.width / 2;
+            y: 1px;
+            visible: mark.row < 0 && self.x + self.width > 0 && self.x < root.width;
+            tint: mark.color;
+            name: mark.name;
+
+            picked => { root.scrubbed(mark.seconds); }
+            dropped(dx) => {
+                root.marker-moved(mark.id, mark.clip-id, root.marker-at(mark.seconds, dx));
+            }
+            edit => { root.marker-edit(mark.id, mark.clip-id); }
+            context => { root.marker-menu(mark.id, mark.clip-id); }
         }
 
         // Last of all, so its surface is over everything. A PopupWindow is its

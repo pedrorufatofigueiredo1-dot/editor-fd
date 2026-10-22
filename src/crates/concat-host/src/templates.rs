@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// SPDX-FileCopyrightText: 2026 Jareer and Concat contributors
+// SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
 
 //! Template bundles on disk.
 //!
@@ -326,6 +326,7 @@ pub fn instantiate(
     // project does: its links read as links to the stand-ins.
     let catalogue = concat_effects::Catalogue::builtin();
     editor.upgrade_links(|link| catalogue.upgrade(link));
+    editor.upgrade_mask_effects();
     if !fills.is_empty() {
         editor
             .apply(Command::Batch {

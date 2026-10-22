@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// SPDX-FileCopyrightText: 2026 Jareer and Concat contributors
+// SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
 
 //! Every edit operation, as data.
 //!
@@ -13,14 +13,15 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::model::{
-    AppliedFilter, AudioTrack, Clip, ClipKind, ColorRange, ColorSpace, Crop, CustomFont, Cutout,
-    CutoutMode, Enhanced, KeyEase, KeyProperty, MediaItem, MediaKind, MediaOrigin, Project,
-    ShapeStyle, SpeedPoint, Stroke, TextStyle, Timeline, Track, Transition, VideoSettings,
+    AppliedFilter, AudioTrack, Background, Clip, ClipKind, ClipMask, ColorRange, ColorSpace, Crop,
+    CustomFont, Cutout, CutoutMode, Enhanced, Framing, KeyEase, KeyProperty, MediaItem, MediaKind,
+    MediaOrigin, Project, ShapeStyle, SpeedPoint, Stabilize, Stroke, TextStyle, Timeline, Track,
+    Transition, VideoSettings,
 };
 
 mod audio;
 mod clips;
-pub use clips::why_not_merge;
+pub use clips::{PlayheadSide, consolidation_clips, delete_to_playhead, why_not_merge};
 mod markers;
 mod media;
 mod properties;
@@ -44,6 +45,7 @@ pub(crate) use crate::model::ranges::{
 
 /// Which end of a clip a trim drags. The two are not symmetric: see
 /// [`Command::TrimClip`].
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TrimEdge {
@@ -55,6 +57,7 @@ pub enum TrimEdge {
 }
 
 /// Which per-track toggle a [`Command::SetTrackFlag`] flips.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TrackFlag {
@@ -65,6 +68,7 @@ pub enum TrackFlag {
 }
 
 /// Where one clip is going, in a multi-clip move.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClipMove {
@@ -81,6 +85,7 @@ pub struct ClipMove {
 /// A partial update to one clip. Every field optional; `transition_in` and
 /// `text` are double-optional so "clear it" and "leave it alone" stay
 /// distinct on the wire (absent = untouched, null = cleared).
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Clone, Default, PartialEq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClipPatch {
@@ -120,7 +125,19 @@ pub struct ClipPatch {
         with = "double_option",
         skip_serializing_if = "Option::is_none"
     )]
+    #[cfg_attr(feature = "schema", schemars(with = "Option<Crop>"))]
     pub crop: Option<Option<Crop>>,
+    /// The mask, same three-way wire semantics as `crop`: absent leaves it
+    /// alone, null takes it off, a value replaces it, tidied on the way in.
+    /// Its keys are the clip's own (`setClipKey` with `maskX` and on), and
+    /// stay when it is taken off, for a mask put back on to ride again.
+    #[serde(
+        default,
+        with = "double_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[cfg_attr(feature = "schema", schemars(with = "Option<ClipMask>"))]
+    pub mask: Option<Option<ClipMask>>,
     /// Wholesale replacement of the audio filter chain - the UI sends the
     /// full list, not a diff.
     pub filters: Option<Vec<AppliedFilter>>,
@@ -133,6 +150,7 @@ pub struct ClipPatch {
         with = "double_option",
         skip_serializing_if = "Option::is_none"
     )]
+    #[cfg_attr(feature = "schema", schemars(with = "Option<Transition>"))]
     pub transition_in: Option<Option<Transition>>,
     /// The title styling, same three-way wire semantics as `transition_in`.
     /// Setting a style also renames the clip after its first line.
@@ -141,6 +159,7 @@ pub struct ClipPatch {
         with = "double_option",
         skip_serializing_if = "Option::is_none"
     )]
+    #[cfg_attr(feature = "schema", schemars(with = "Option<TextStyle>"))]
     pub text: Option<Option<TextStyle>>,
     /// Which of the media's audio streams the clip plays, by stream index:
     /// absent leaves it alone, null goes back to the file's first, a value
@@ -150,7 +169,18 @@ pub struct ClipPatch {
         with = "double_option",
         skip_serializing_if = "Option::is_none"
     )]
+    #[cfg_attr(feature = "schema", schemars(with = "Option<u32>"))]
     pub audio_stream: Option<Option<u32>>,
+    /// The clip's own background over the timeline's: absent leaves it
+    /// alone, null goes back to following the timeline's, a value - black
+    /// included - is the clip's own. See `Clip::background`.
+    #[serde(
+        default,
+        with = "double_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[cfg_attr(feature = "schema", schemars(with = "Option<Background>"))]
+    pub background: Option<Option<Background>>,
 }
 
 /// `Option<Option<T>>` over JSON: absent → None, null → Some(None).
@@ -175,6 +205,7 @@ mod double_option {
 }
 
 /// A media item as probed by the host, before the model mints its id.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NewMedia {
@@ -222,6 +253,7 @@ pub struct NewMedia {
 /// fields. [`apply`] is the single place each variant's meaning lives; the
 /// notes here state the contract - clamps, tolerances, what gets minted -
 /// so a caller need not read `apply` to know what a command will do.
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "camelCase", rename_all_fields = "camelCase")]
 // A clip patch carries a whole text style, which is the largest variant by
@@ -294,6 +326,25 @@ pub enum Command {
         /// Timeline position in seconds, floored at 0.
         start: f64,
     },
+    /// Several bin items one after another on one lane, as one step: what
+    /// a selection of cards dragged from the bin, or added at the playhead,
+    /// lands as. Each clip starts where the one before it ends. Naming a
+    /// lane puts the run there, each clip placed as [`Command::AddClip`]
+    /// places one with the same `ripple`; without one, the run goes on the
+    /// lowest lane free for its whole length, a new one when none is.
+    AddClipsInSequence {
+        /// The bin items, in the order they are laid down.
+        media_ids: Vec<String>,
+        /// The lane, or None for the lowest one free for the whole run.
+        #[serde(default)]
+        track_id: Option<String>,
+        /// Where the first clip starts, in seconds, floored at 0.
+        start: f64,
+        /// On a named lane, make room as a drop does rather than take the
+        /// nearest gap.
+        #[serde(default)]
+        ripple: bool,
+    },
     /// Places a title: a clip with no media behind it, named after the
     /// text's first line, minting a "c" id.
     AddTextClip {
@@ -349,7 +400,10 @@ pub enum Command {
     /// package named, at its defaults, and the clip's opacity is how hard it
     /// is applied.
     AddLayerClip {
-        /// The lane to place it on; None picks the first free track.
+        /// The lane to place it on. None picks the first free lane *above*
+        /// the highest one occupied over its span, minting one at the top
+        /// when every lane above is taken: a layer treats what is beneath
+        /// it, so one under the picture would treat nothing.
         track_id: Option<String>,
         /// Timeline position in seconds, floored at 0.
         start: f64,
@@ -369,6 +423,13 @@ pub enum Command {
         clip_id: String,
         /// The curve, or None for a constant rate at the current mean.
         curve: Option<Vec<SpeedPoint>>,
+        /// When true - the magnetic timeline - the clips after it on its
+        /// lane move by however far its end moved, either way, so a clip
+        /// sped up closes up behind it as a magnetic trim does. False
+        /// leaves the gap; later clips then only move out of the way of a
+        /// clip that grew over them.
+        #[serde(default)]
+        ripple: bool,
     },
     /// Puts a key on one property at one point of a clip, replacing
     /// whichever key on that property was already within a hair of it.
@@ -453,6 +514,16 @@ pub enum Command {
         clip_id: String,
         /// The cutout, or None to take it off.
         cutout: Option<Cutout>,
+    },
+    /// Turns a picture's stabilization on, sets its settings, or takes it
+    /// off. Tidied on the way in; see [`Stabilize::tidy`]. The camera's
+    /// movement is measured by the host the first time a clip of the
+    /// media asks for it; until then the clip shows as shot.
+    SetClipStabilize {
+        /// The clip. An unknown id is a no-op.
+        clip_id: String,
+        /// The settings, or None to take stabilization off.
+        stabilize: Option<Stabilize>,
     },
     /// Paints one stroke onto a clip's cutout. A clip with no cutout gets a
     /// custom one; an automatic cutout becomes custom, since a stroke is a
@@ -561,6 +632,15 @@ pub enum Command {
         /// The pieces to rejoin, any order.
         clip_ids: Vec<String>,
     },
+    /// Replaces selected video clips with their host-rendered media, as one
+    /// undoable edit. Keeps the earliest clip's id, track and timeline span;
+    /// resets baked properties. The host must render only these clips first.
+    ConsolidateClips {
+        /// Two or more video clips on one track, in any order.
+        clip_ids: Vec<String>,
+        /// The completed, probed render stored in the project media folder.
+        item: NewMedia,
+    },
     /// Deletes clips from the active timeline. Unknown ids are ignored.
     RemoveClips {
         /// The clips to delete.
@@ -591,6 +671,13 @@ pub enum Command {
         clip_id: String,
         /// The new rate, clamped into 0.0625..=16 (the engine's range).
         speed: f64,
+        /// When true - the magnetic timeline - the clips after it on its
+        /// lane move by however far its end moved, either way, so a clip
+        /// sped up closes up behind it as a magnetic trim does. False
+        /// leaves the gap; later clips then only move out of the way of a
+        /// clip that grew over them.
+        #[serde(default)]
+        ripple: bool,
     },
     /// Adjusts the picture's placement. Each field is optional so a drag
     /// can send just the axis it moved; absent fields stay put.
@@ -612,6 +699,22 @@ pub enum Command {
         /// New height multiplier, on the same terms.
         #[serde(default)]
         stretch_y: Option<f64>,
+    },
+    /// Sizes a picture to the frame in one step: fitted whole inside it,
+    /// or covering it, centred either way and unstretched (see
+    /// [`crate::model::framing_scale`]; a turned picture is sized as turned).
+    /// A scale or a position with keys gets a key at `at` rather than a new
+    /// constant, the way every edit of a keyed property lands, so the rest
+    /// of the ride is left as it was. A no-op for a clip that is not a video
+    /// or a still, or whose media's size is unknown.
+    FrameClip {
+        /// The clip to size. An unknown id is a no-op.
+        clip_id: String,
+        /// Fit or fill.
+        framing: Framing,
+        /// Where in the clip, `0..=1`, a keyed property takes its key.
+        #[serde(default)]
+        at: f64,
     },
     /// Pulls a video clip's sound out into its own audio clip on a free
     /// lane (minting one if none is free), muting the video and moving its
@@ -667,6 +770,15 @@ pub enum Command {
         timeline_id: String,
         /// The frame and the rate, together.
         video: VideoSettings,
+    },
+    /// Sets what fills a timeline's frame behind the pictures on its lowest
+    /// picture lane; see `Timeline::background_of`. Tidied first: an amount
+    /// held to `0..=1`, a colour that does not read made black.
+    SetTimelineBackground {
+        /// The timeline. An unknown id is a no-op.
+        timeline_id: String,
+        /// The background.
+        background: Background,
     },
     /// Renames a timeline tab. Whitespace-only names are ignored so a tab
     /// can never end up blank; unknown ids are tolerated.
@@ -957,12 +1069,12 @@ impl Command {
         }
         match self {
             Command::Batch { commands } => commands.iter().any(Command::has_non_finite),
-            Command::AddMedia { item } | Command::FillSlot { item, .. } => {
-                bad(item.duration) || bad(item.frame_rate)
-            }
-            Command::AddClip { start, .. } | Command::AddClipAtFirstFree { start, .. } => {
-                bad([*start])
-            }
+            Command::AddMedia { item }
+            | Command::FillSlot { item, .. }
+            | Command::ConsolidateClips { item, .. } => bad(item.duration) || bad(item.frame_rate),
+            Command::AddClip { start, .. }
+            | Command::AddClipAtFirstFree { start, .. }
+            | Command::AddClipsInSequence { start, .. } => bad([*start]),
             Command::AddShapeClip {
                 start,
                 duration,
@@ -1016,6 +1128,9 @@ impl Command {
                 bad([cutout.feather]) || cutout.strokes.iter().any(bad_stroke)
             }),
             Command::AddCutoutStroke { stroke, .. } => bad_stroke(stroke),
+            Command::SetClipStabilize { stabilize, .. } => stabilize
+                .as_ref()
+                .is_some_and(|stabilize| bad([stabilize.smoothness, stabilize.max_zoom])),
             Command::MoveClips { moves } => bad(moves.iter().map(|wanted| wanted.start)),
             Command::TrimClip { delta, .. } => bad([*delta]),
             Command::SplitClips { time, .. } => bad([*time]),
@@ -1033,13 +1148,28 @@ impl Command {
                         .iter()
                         .flatten()
                         .any(|crop| bad([crop.left, crop.top, crop.right, crop.bottom]))
+                    || patch.mask.iter().flatten().any(|mask| {
+                        bad([
+                            mask.x,
+                            mask.y,
+                            mask.width,
+                            mask.height,
+                            mask.rotation,
+                            mask.roundness,
+                            mask.feather,
+                        ])
+                    })
                     || patch.filters.as_deref().is_some_and(bad_chain)
                     || patch.video_effects.as_deref().is_some_and(bad_chain)
                     || patch
                         .transition_in
                         .iter()
                         .flatten()
-                        .any(|tr| bad([tr.duration]))
+                        .any(|tr| bad([tr.duration]) || tr.params.values().any(|v| !v.is_finite()))
+                    || matches!(
+                        patch.background,
+                        Some(Some(Background::Blur { amount })) if !amount.is_finite()
+                    )
                     || patch.text.iter().flatten().any(|style| {
                         bad([
                             style.font_size,
@@ -1054,6 +1184,11 @@ impl Command {
                     })
             }
             Command::SetClipSpeed { speed, .. } => bad([*speed]),
+            Command::FrameClip { at, .. } => bad([*at]),
+            Command::SetTimelineBackground {
+                background: Background::Blur { amount },
+                ..
+            } => bad([*amount]),
             Command::SetClipTransform {
                 scale,
                 offset_x,
@@ -1130,6 +1265,7 @@ pub fn apply(
         | Command::SetMediaColorRange { .. }) => media::apply(project, mint, command),
         command @ (Command::AddClip { .. }
         | Command::AddClipAtFirstFree { .. }
+        | Command::AddClipsInSequence { .. }
         | Command::AddTextClip { .. }
         | Command::AddShapeClip { .. }
         | Command::AddLayerClip { .. }
@@ -1140,11 +1276,13 @@ pub fn apply(
         | Command::ReplaceClipMedia { .. }
         | Command::SetClipEnhanced { .. }
         | Command::MergeClips { .. }
+        | Command::ConsolidateClips { .. }
         | Command::RemoveClips { .. }) => clips::apply(project, mint, command),
         command @ (Command::UpdateClip { .. }
         | Command::SetClipSpeed { .. }
         | Command::SetClipCutout { .. }
         | Command::AddCutoutStroke { .. }
+        | Command::SetClipStabilize { .. }
         | Command::SetClipKey { .. }
         | Command::ClearClipKey { .. }
         | Command::ClearClipKeys { .. }
@@ -1152,7 +1290,8 @@ pub fn apply(
         | Command::ClearEffectKey { .. }
         | Command::ClearEffectKeys { .. }
         | Command::SetClipSpeedCurve { .. }
-        | Command::SetClipTransform { .. }) => properties::apply(project, mint, command),
+        | Command::SetClipTransform { .. }
+        | Command::FrameClip { .. }) => properties::apply(project, mint, command),
         command @ (Command::DetachAudio { .. } | Command::ReattachAudio { .. }) => {
             audio::apply(project, mint, command)
         }
@@ -1161,6 +1300,7 @@ pub fn apply(
         | Command::SetTrackFlag { .. }) => tracks::apply(project, mint, command),
         command @ (Command::AddTimeline
         | Command::SetTimelineVideo { .. }
+        | Command::SetTimelineBackground { .. }
         | Command::RemoveTimeline { .. }
         | Command::RenameTimeline { .. }
         | Command::SelectTimeline { .. }

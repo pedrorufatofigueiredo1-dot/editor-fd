@@ -86,37 +86,25 @@ env:
   # shared build.
   ORT_VERSION: 1.28.0
   # And for Intel Macs, which neither ort nor Microsoft build for any more:
-  # the last release Microsoft made for them.
-  #
-  # NOTE: ort 2.0.0-rc.13 with its default features asks the runtime for
-  # API 27 (its `api-27` feature), and 1.23.2 serves API 23 and below, so
-  # on an Intel Mac the first ONNX session (a cutout, Chatterbox) should
-  # fail to get the API. That predates the pinning here, and wants a look
-  # on an Intel Mac: either an older `api-*` feature for ort, or no
-  # cutouts there.
+  # the last release Microsoft made for them. It serves API 23, which is
+  # what ort asks for there, and it is built for macOS 13.4, so it is not
+  # linked: the app loads it at first use, and not on an older macOS (see
+  # concat-vision's manifest and onnx.rs, and #333).
   ORT_INTEL_MAC_VERSION: 1.23.2
   # WiX for the Windows .msi, as a dotnet tool, pinned by version.
   WIX_VERSION: 6.0.2
   # Oldest macOS the bundles run on. Apple silicon Macs all run newer than
-  # this; it is the Intel floor.
+  # this; it is the Intel floor. scripts/ci/check-min-os.sh lists every
+  # bundled library built for a newer one.
   MACOSX_DEPLOYMENT_TARGET: "12.0"
   # ggml (whisper.cpp's kernels) tunes itself to the machine it is built
   # on unless told otherwise, and these bundles run on other machines: a
   # runner with AVX-512 or SVE would leave a binary that faults on a CPU
-  # without them. Off, ggml does not probe the runner - but its own
-  # instruction-set switches still default to on, which on x86_64 means
-  # AVX2 with FMA, F16C and BMI2: the whole CPU backend is compiled with
-  # /arch:AVX2 (or -mavx2) and the editor dies at launch with an illegal
-  # instruction on a Sandy Bridge or Ivy Bridge machine, which has AVX
-  # and nothing newer (#193). The baseline is AVX: every x86_64 CPU since
-  # 2011 runs it, and whisper on the CPU is somewhat slower for the rest.
-  # NEON on ARM, where these switches are not read. whisper-rs-sys
-  # forwards every GGML_* variable to CMake as a define.
+  # without them. Off, ggml does not probe the runner. whisper-rs-sys
+  # forwards every GGML_* variable to CMake as a define. The instruction
+  # sets each target's kernels are built for are the job's, by its `ggml`
+  # row in the matrix; see the job's `env`.
   GGML_NATIVE: "OFF"
-  GGML_AVX2: "OFF"
-  GGML_FMA: "OFF"
-  GGML_F16C: "OFF"
-  GGML_BMI2: "OFF"
 
 jobs:
   app:
@@ -137,6 +125,10 @@ jobs:
             os: macos-15-intel
             target: x86_64-apple-darwin
             sherpa: osx-x64
+            # No `ggml` row: built as 0.2.7 was, with no AVX2. This bundle
+            # runs on macOS 12 again, and so on the 2013 Mac Pro, whose Ivy
+            # Bridge has AVX and nothing newer; Intel Macs are about one
+            # download in a hundred, and slower captions there beat a crash.
           # 22.04, not latest: the binary links the build machine's glibc,
           # so the oldest supported runner is what keeps it runnable on
           # older distributions.
@@ -149,6 +141,7 @@ jobs:
             ort: x64
             nfpm: amd64
             appimage: x86_64
+            ggml: variants
           - platform: linux
             arch: aarch64
             os: ubuntu-22.04-arm
@@ -169,6 +162,7 @@ jobs:
             vc: x64
             inno: x64compatible
             wix: x64
+            ggml: variants
           # No Windows on ARM until its program starts: v0.2.7-rc.4's
           # concat.exe died with an access violation on `--version` (#326).
           # Its row was platform windows, arch aarch64, os windows-11-arm,
@@ -180,6 +174,42 @@ jobs:
     # at most 155 minutes between them on any one target, so a stuck step
     # is named by its own timeout; this is for a job stuck anywhere else.
     timeout-minutes: 190
+    env:
+      # What whisper's CPU kernels are built for on x86_64, by the matrix's
+      # `ggml` row. ggml's own switches default to AVX2 with FMA, F16C and
+      # BMI2, compiled into the whole CPU backend - and the editor died at
+      # launch with an illegal instruction on an Ivy Bridge, which has AVX
+      # and nothing newer (#193). 0.2.6 and 0.2.7 built with all four off,
+      # so those machines start, and every other one transcribed some
+      # eight times slower: 324 s for 43 s of sound on a Ryzen 5 2600, 40 s
+      # with AVX2 (#388). Two answers, by target:
+      #
+      # - `variants` (Windows and Linux x86_64): whisper and ggml are built
+      #   as shared libraries and the CPU backend as one module per x86_64
+      #   generation - ggml-cpu-x64, -sse42, -sandybridge, -haswell,
+      #   -skylakex, -icelake, -alderlake and more - shipped beside the
+      #   program. At the first transcription ggml scores each against the
+      #   CPU's CPUID and loads the best it can run (concat-speech's
+      #   `cpu_backend`), so a Haswell or a Ryzen gets AVX2 and FMA, and a
+      #   Sandy Bridge the AVX kernels it had. The modules are what the
+      #   whisper.cpp and llama.cpp projects ship their own x86 builds as.
+      #   The published whisper-rs-sys can only build static libraries;
+      #   src/patches/whisper-rs-sys adds the shared build, chosen by
+      #   GGML_BACKEND_DL. Nothing else in the bundle may hold AVX2: the
+      #   instruction-set scan allows it in the Haswell-and-newer modules
+      #   alone (scripts/ci/isa-allow.txt).
+      # - none (macOS x86_64): all four off, as before. It declares macOS 12,
+      #   which the 2013 Mac Pro runs, and that is an Ivy Bridge.
+      #
+      # Everything else is ARM, which reads none of these. The `haswell`
+      # answer - built for Haswell outright - is kept for a target that
+      # only runs on AVX2 machines.
+      GGML_BACKEND_DL: ${{ matrix.ggml == 'variants' && 'ON' || 'OFF' }}
+      GGML_CPU_ALL_VARIANTS: ${{ matrix.ggml == 'variants' && 'ON' || 'OFF' }}
+      GGML_AVX2: ${{ matrix.ggml == 'haswell' && 'ON' || 'OFF' }}
+      GGML_FMA: ${{ matrix.ggml == 'haswell' && 'ON' || 'OFF' }}
+      GGML_F16C: ${{ matrix.ggml == 'haswell' && 'ON' || 'OFF' }}
+      GGML_BMI2: ${{ matrix.ggml == 'haswell' && 'ON' || 'OFF' }}
     steps:
       # The ref release.yml names, which is its tag: without one a run
       # started by hand builds main and publishes it under the tag's name.
@@ -192,7 +222,7 @@ jobs:
         id: toolchain
         shell: bash
         run: echo "channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' src/rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
-      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master (v1), 2026-10-09
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master (v1), 2026-10-09
         with:
           toolchain: ${{ steps.toolchain.outputs.channel }}
 
@@ -281,12 +311,14 @@ jobs:
           # target set, the check is folded away at compile time.)
           echo "RUSTFLAGS=-C link-arg=$(xcrun clang --print-file-name=libclang_rt.osx.a)" >> "$GITHUB_ENV"
 
-      # ONNX Runtime on an Intel Mac. ort ships no static build for
+      # ONNX Runtime on an Intel Mac. ort ships no build for
       # x86_64-apple-darwin, so the cutout's runtime is Microsoft's shared
-      # one, linked dynamically the way Linux does it, and bundled into
-      # Frameworks by dylibbundler along with FFmpeg's - the install name
-      # is @rpath, so the bundler is told where to look. Apple silicon
-      # keeps ort's static build.
+      # one - and that is built for macOS 13.4, while the app runs on 12.
+      # Linked at load time it closed the app at launch on 12 (#333), so
+      # it is not linked at all: ort is built with `load-dynamic` there,
+      # the bundle step copies the library into Frameworks, and the app
+      # opens it at the first cutout or Chatterbox read, on a macOS new
+      # enough for it. Apple silicon keeps ort's static build.
       - name: ONNX Runtime (Intel macOS)
         if: matrix.platform == 'macos' && matrix.arch == 'x86_64'
         run: |
@@ -295,11 +327,23 @@ jobs:
           scripts/ci/fetch.sh onnxruntime-osx-x86_64 onnxruntime.tgz
           tar -xzf onnxruntime.tgz
           test -f "$stem/lib/libonnxruntime.$ORT_INTEL_MAC_VERSION.dylib"
-          ln -sf "libonnxruntime.$ORT_INTEL_MAC_VERSION.dylib" "$stem/lib/libonnxruntime.dylib"
+          echo "ORT_MAC_DYLIB=$PWD/$stem/lib/libonnxruntime.$ORT_INTEL_MAC_VERSION.dylib" >> "$GITHUB_ENV"
+
+      # Thin LTO and sixteen codegen units for the Intel Mac, in place of the
+      # app profile's fat LTO and one unit. The Intel runner is the slowest
+      # target and the one every release waits on: in v0.2.7-rc.4 its
+      # build was 70 minutes, 57 of them after the last dependency compiled -
+      # fat LTO re-optimising the whole program on one thread, which no cache
+      # can skip. Thin LTO does that work in parallel, for a binary a few
+      # per cent slower on the platform with the fewest users. Every other
+      # target keeps the profile as Cargo.toml writes it. Set before the
+      # cache step, so these are part of its key (CARGO is in env-vars).
+      - name: Thin LTO (Intel macOS)
+        if: matrix.platform == 'macos' && matrix.arch == 'x86_64'
+        run: |
           {
-            echo "ORT_LIB_LOCATION=$PWD/$stem/lib"
-            echo "ORT_PREFER_DYNAMIC_LINK=1"
-            echo "ORT_DIR=$PWD/$stem"
+            echo "CARGO_PROFILE_APP_LTO=thin"
+            echo "CARGO_PROFILE_APP_CODEGEN_UNITS=16"
           } >> "$GITHUB_ENV"
 
       # ── Windows ────────────────────────────────────────────────────────
@@ -577,8 +621,7 @@ jobs:
           dylibbundler -od -b \
             -x "$app/Contents/MacOS/concat" \
             -d "$app/Contents/Frameworks" \
-            -p @executable_path/../Frameworks \
-            ${ORT_DIR:+-s "$ORT_DIR/lib"}
+            -p @executable_path/../Frameworks
 
           # Nothing outside the bundle may remain: a load path into
           # Homebrew would break on a Mac without it.
@@ -586,6 +629,29 @@ jobs:
             echo "the binary still loads libraries from outside the bundle" >&2
             exit 1
           fi
+
+          # ONNX Runtime is never linked at launch: on an Intel Mac it is
+          # loaded at first use from Frameworks, under the name the app
+          # looks for (concat-vision's onnx.rs), and on Apple silicon it is
+          # inside the binary. A link here is #333 back: the app closing at
+          # launch on every macOS older than the runtime.
+          if otool -L "$app/Contents/MacOS/concat" | grep libonnxruntime ; then
+            echo "the binary links ONNX Runtime at launch" >&2
+            exit 1
+          fi
+          lazy=()
+          if [ -n "${ORT_MAC_DYLIB:-}" ]; then
+            cp "$ORT_MAC_DYLIB" "$app/Contents/Frameworks/libonnxruntime.dylib"
+            lazy=(--lazy Contents/Frameworks/libonnxruntime.dylib)
+          fi
+
+          # Every library in the bundle against the floor it declares. A
+          # warning for now: Homebrew's FFmpeg is built for the runner's
+          # macOS, so every Mac bundle has some until FFmpeg is built here
+          # for the floor. ONNX Runtime is listed apart, with the macOS it
+          # needs: the app reads that same field before loading it, and on
+          # an older one the AI features say so instead.
+          scripts/ci/check-min-os.sh "$app" "$MACOSX_DEPLOYMENT_TARGET" ${lazy[@]+"${lazy[@]}"}
 
       # Signed with the repository's Developer ID when it has one, and
       # notarised so Gatekeeper opens it without a warning; ad-hoc signed
@@ -665,6 +731,24 @@ jobs:
           cp "src/target/${{ matrix.target }}/app/concat" "stage/$name/concat"
           cp -a ffmpeg-dev/lib/*.so* "stage/$name/lib/"
           cp -a "$ORT_DIR"/lib/libonnxruntime.so* "stage/$name/lib/"
+          # whisper's shared libraries and its CPU modules, one per x86_64
+          # generation (the job's `env` says why), from where whisper-rs-sys
+          # installed them: libraries in lib/, modules in bin/. Its build
+          # also copies them beside the binary, for `cargo run`, but a build
+          # the cache satisfied does not run that script again, and the
+          # cache does not promise to keep loose files at the top of a
+          # profile. In lib/ the rpath finds the libraries and
+          # concat-speech's `cpu_backend` the modules.
+          if [ "${{ matrix.ggml }}" = variants ]; then
+            out=$(ls -dt "src/target/${{ matrix.target }}/app/build"/whisper-rs-sys-*/out/bin | head -1)
+            out=${out%/bin}
+            echo "whisper's build: $out"
+            cp -a "$out"/lib*/libwhisper.so* "$out"/lib*/libggml*.so* "$out"/bin/libggml-cpu-*.so "stage/$name/lib/"
+            for module in x64 sandybridge haswell; do
+              test -f "stage/$name/lib/libggml-cpu-$module.so" \
+                || { echo "libggml-cpu-$module.so is missing from the build" >&2; exit 1; }
+            done
+          fi
           cp assets/icons/concat_logo_256.png "stage/$name/concat.png"
           cat > "stage/$name/concat.desktop" <<DESKTOP
           [Desktop Entry]
@@ -813,11 +897,19 @@ jobs:
           mkdir -p "$appdir/usr/bin" "$appdir/usr/share/icons/hicolor/256x256/apps" "$appdir/usr/share/applications"
           cp "$STAGE/concat" "$appdir/usr/bin/concat"
           cp -a "$STAGE/lib" "$appdir/usr/bin/lib"
-          # The X11 keyboard library the window opens by name at start, and
-          # the xcb extension under it: a machine without them panicked
-          # before showing a window, which is how the AppImage catalog's
-          # test saw it. Beside the binary, the rpath finds them.
-          for lib in libxkbcommon-x11.so.0 libxcb-xkb.so.1; do
+          # The X11 keyboard library the window opens by name at start, the
+          # core library under it, and the xcb extension under that: a machine
+          # without them panicked before showing a window, which is how the
+          # AppImage catalog's test saw it. Beside the binary, the rpath finds
+          # them, and an rpath on the binary covers every library the process
+          # loads, not only its own.
+          #
+          # The core library comes too because the two are one build, and a
+          # distribution pins them to each other ("libxkbcommon(x86-64) =
+          # 1.13.1-2.fc44" on Fedora 44): this runner's 1.4.0 module left to
+          # drive the host's 1.13.1 core segfaults in xkb_state_update_derived
+          # as the X11 window opens (#379).
+          for lib in libxkbcommon.so.0 libxkbcommon-x11.so.0 libxcb-xkb.so.1; do
             cp -L "$(ldconfig -p | awk -v lib="$lib" '$1 == lib { print $NF; exit }')" "$appdir/usr/bin/lib/$lib"
           done
           cp "$STAGE/concat.desktop" "$appdir/concat.desktop"
@@ -882,6 +974,21 @@ jobs:
           # The sherpa-onnx runtime, set aside by the download step above.
           Copy-Item "$env:SHERPA_DLL_DIR\*.dll" $dir
           Copy-Item "$env:ORT_DIR\lib\*.dll" $dir
+          # whisper's DLLs and its CPU modules, one per x86_64 generation
+          # (the job's `env` says why), from the bin\ whisper-rs-sys
+          # installed them to; see the Linux stage for why not from beside
+          # the program. Beside concat.exe Windows finds the DLLs and
+          # concat-speech's `cpu_backend` the modules.
+          if ("${{ matrix.ggml }}" -eq "variants") {
+            $built = Get-ChildItem "src\target\${{ matrix.target }}\app\build\whisper-rs-sys-*\out\bin\ggml-cpu-x64.dll" |
+              Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            if (-not $built) { throw "whisper-rs-sys installed no ggml-cpu-x64.dll" }
+            Write-Host "whisper's build: $($built.DirectoryName)"
+            Copy-Item "$($built.DirectoryName)\whisper.dll", "$($built.DirectoryName)\ggml*.dll" $dir
+            foreach ($module in "x64", "sandybridge", "haswell") {
+              if (-not (Test-Path "$dir\ggml-cpu-$module.dll")) { throw "ggml-cpu-$module.dll is missing from the build" }
+            }
+          }
           Copy-Item LICENSE, THIRD_PARTY_NOTICES.md $dir
           # The Visual C++ runtime DLLs anything in the folder imports, from
           # the newest redistributable folder Visual Studio carries.

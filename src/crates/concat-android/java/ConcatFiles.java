@@ -1,20 +1,23 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// SPDX-FileCopyrightText: 2026 Jareer and Concat contributors
+// SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
 
 package app.concat.editor;
 
+import android.Manifest;
 import android.app.Activity;
 import android.app.Fragment;
 import android.content.ClipData;
 import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
 import android.provider.MediaStore;
 import android.provider.OpenableColumns;
+import android.util.Log;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -46,11 +49,15 @@ import java.util.List;
  * {@link #publishVideo} moves it into the phone's Movies through the
  * media store, where the gallery and every file manager show it.
  *
+ * And the microphone, for a voiceover: a permission granted while the
+ * app runs, asked for through the activity by {@link #askMicrophone}.
+ *
  * Compiled by build.rs with the SDK's javac and d8, and loaded at run time
  * from the dex inside the binary; see src/lib.rs.
  */
 public class ConcatFiles extends Fragment {
     private static final int REQUEST_PICK = 0xC0C4;
+    private static final int REQUEST_MICROPHONE = 0xC0C5;
     private static final String TAG = "concat-files";
 
     /**
@@ -78,14 +85,34 @@ public class ConcatFiles extends Fragment {
         if (folder == null) {
             return new String[] {null, "this phone has no media store to put it in"};
         }
+        return publish(activity, path, "video/mp4", folder,
+                MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY));
+    }
+
+    /**
+     * {@link #publishVideo} for a small file that is not a video - a
+     * subtitle file - of MIME type {@code mime}: moved into the phone's
+     * Download/Concat, which every file manager shows, under its own name
+     * or "name (1)" where that is taken. The same two strings come back.
+     */
+    public static String[] publishDocument(Activity activity, String path, String mime) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            return new String[] {null, "this phone has no media store to put it in"};
+        }
+        return publish(activity, path, mime, Environment.DIRECTORY_DOWNLOADS + "/Concat",
+                MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY));
+    }
+
+    /** Moves the file at {@code path} into {@code collection}, under {@code folder}. */
+    private static String[] publish(
+            Activity activity, String path, String mime, String folder, Uri collection) {
         File file = new File(path);
         ContentResolver resolver = activity.getContentResolver();
         ContentValues values = new ContentValues();
-        values.put(MediaStore.Video.Media.DISPLAY_NAME, file.getName());
-        values.put(MediaStore.Video.Media.MIME_TYPE, "video/mp4");
-        values.put(MediaStore.Video.Media.RELATIVE_PATH, folder);
-        values.put(MediaStore.Video.Media.IS_PENDING, 1);
-        Uri collection = MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY);
+        values.put(MediaStore.MediaColumns.DISPLAY_NAME, file.getName());
+        values.put(MediaStore.MediaColumns.MIME_TYPE, mime);
+        values.put(MediaStore.MediaColumns.RELATIVE_PATH, folder);
+        values.put(MediaStore.MediaColumns.IS_PENDING, 1);
         Uri uri;
         try {
             uri = resolver.insert(collection, values);
@@ -111,7 +138,7 @@ public class ConcatFiles extends Fragment {
             out.close();
             out = null;
             values.clear();
-            values.put(MediaStore.Video.Media.IS_PENDING, 0);
+            values.put(MediaStore.MediaColumns.IS_PENDING, 0);
             resolver.update(uri, values, null, null);
         } catch (Exception e) {
             try {
@@ -134,11 +161,60 @@ public class ConcatFiles extends Fragment {
         return new String[] {folder + "/" + displayName(activity, uri), null};
     }
 
+    /**
+     * Whether the app may record from the microphone. When it may not yet,
+     * the system's question is put up and false comes back at once; the
+     * answer is read the next time this is asked, which is the voiceover
+     * panel's Try again. From any thread.
+     */
+    public static boolean askMicrophone(final Activity activity) {
+        if (Build.VERSION.SDK_INT < 23) {
+            return true;
+        }
+        if (activity.checkSelfPermission(Manifest.permission.RECORD_AUDIO)
+                == PackageManager.PERMISSION_GRANTED) {
+            return true;
+        }
+        activity.runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                activity.requestPermissions(
+                        new String[] {Manifest.permission.RECORD_AUDIO}, REQUEST_MICROPHONE);
+            }
+        });
+        return false;
+    }
+
+    /**
+     * Opens a web address in the browser, or in whichever app claims it -
+     * the launch screen's guides, the repository, the Discord invite. Null
+     * when it went, or why it could not. Asked straight rather than through
+     * resolveActivity, which from Android 11 answers no for any app the
+     * manifest does not name in its queries. From any thread.
+     */
+    public static String openLink(Activity activity, String url) {
+        try {
+            Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            activity.startActivity(intent);
+            return null;
+        } catch (android.content.ActivityNotFoundException e) {
+            return "no app on this phone opens " + url;
+        } catch (RuntimeException e) {
+            Log.w(TAG, "could not open " + url, e);
+            return String.valueOf(e.getMessage());
+        }
+    }
+
     /** Registered from Rust: the picked files' paths, or none. */
     public static native void filesPicked(String[] paths);
 
-    /** Shows the picker. From any thread; the fragment is added on the UI thread. */
-    public static void pick(final Activity activity) {
+    /**
+     * Shows the picker, offering the MIME types in {@code types} - comma
+     * separated, "video/*,audio/*" - or every file when it is empty. From
+     * any thread; the fragment is added on the UI thread.
+     */
+    public static void pick(final Activity activity, final String types) {
         activity.runOnUiThread(new Runnable() {
             @Override
             public void run() {
@@ -152,7 +228,9 @@ public class ConcatFiles extends Fragment {
                 Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
                 intent.addCategory(Intent.CATEGORY_OPENABLE);
                 intent.setType("*/*");
-                intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[] {"video/*", "audio/*", "image/*"});
+                if (types != null && !types.isEmpty()) {
+                    intent.putExtra(Intent.EXTRA_MIME_TYPES, types.split(","));
+                }
                 intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
                 try {
                     fragment.startActivityForResult(intent, REQUEST_PICK);
@@ -274,7 +352,11 @@ public class ConcatFiles extends Fragment {
                 os.write(buffer, 0, read);
             }
             return true;
-        } catch (IOException e) {
+        } catch (IOException | RuntimeException e) {
+            // A provider that revokes its grant mid-copy throws a
+            // SecurityException, not an IOException; uncaught on this
+            // thread it closed the app and lost the rest of the pick.
+            Log.w(TAG, "could not copy " + uri + ": " + e);
             out.delete();
             return false;
         } finally {

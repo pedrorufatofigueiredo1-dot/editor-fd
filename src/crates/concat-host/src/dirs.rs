@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// SPDX-FileCopyrightText: 2026 Jareer and Concat contributors
+// SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
 
 //! Where the app keeps what belongs to this machine rather than to a
 //! project: the recents list, remembered settings, downloaded models.
@@ -86,11 +86,24 @@ impl AppDirs {
             data: root.to_path_buf(),
         }
     }
+
+    /// Where what the user made and cannot download again is kept - the
+    /// Audio page's own sounds, the voices they cloned: `data` everywhere
+    /// but an iPhone, whose `data` is `Caches`, which the phone may empty
+    /// when it runs short of space and does not back up. There it is
+    /// `config`, `Application Support`, which it keeps.
+    pub fn library(&self) -> PathBuf {
+        if cfg!(target_os = "ios") {
+            self.config.clone()
+        } else {
+            self.data.clone()
+        }
+    }
 }
 
 /// The folders under `data`, each named where it is made: models, caches
 /// and logs. What is not listed is the settings', and stays in `config`.
-const DATA_FOLDERS: [&str; 7] = [
+const DATA_FOLDERS: [&str; 10] = [
     "cutout-models",  // concat-vision, models.rs
     "whisper-models", // concat-speech, transcribe.rs
     "tts-models",     // concat-speech, tts.rs
@@ -98,6 +111,9 @@ const DATA_FOLDERS: [&str; 7] = [
     "titles",         // titles.rs
     "updates",        // updates.rs
     "logs",           // logs.rs
+    "audio",          // sounds.rs: the Audio page's own sounds; see `library`
+    "voices",         // voices.rs: saved cloned voices; see `library`
+    "sounds",         // sounds.rs: Concat's sounds, downloaded on first use
 ];
 
 /// Moves what an older build kept under `from` - Windows kept models and

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// SPDX-FileCopyrightText: 2026 Jareer and Concat contributors
+// SPDX-FileCopyrightText: 2026 Jareer Abdullah and Concat contributors
 
 //! Speech in and out, entirely on this machine.
 //!
@@ -37,6 +37,29 @@ pub use tts::Speech;
 /// at all loads for the CPU instead (tts.rs).
 pub const fn accelerated() -> bool {
     cfg!(target_os = "macos")
+}
+
+/// How far a transcription or a read has got, as it reports it: the stage
+/// it is in, and in the work itself where it is and where the step under
+/// way will leave it. A job is mostly long waits between reports - whisper
+/// reports once per thirty seconds of sound, sherpa once per sentence - and
+/// `next` is what lets a bar move through the wait without promising more
+/// than the job has done.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum JobStage {
+    /// Reading the sound in: a clip's, or the recording a voice is read
+    /// from.
+    Reading,
+    /// Loading the model. Not reported when it is still loaded from the
+    /// run before.
+    Loading,
+    /// The work itself.
+    Working {
+        /// How much of it is finished, `0..=1`.
+        done: f32,
+        /// Where the step under way ends, `done..=1`.
+        next: f32,
+    },
 }
 
 /// Progress for one model download.
