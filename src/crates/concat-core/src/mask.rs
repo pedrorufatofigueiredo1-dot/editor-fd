@@ -431,6 +431,21 @@ pub fn pen_matte(
     height: u32,
     stretch: (f32, f32),
 ) -> Option<crate::frame::Frame> {
+    matte_of(mask, Some(corners), width, height, stretch)
+}
+
+/// Any mask drawn into a matte over a picture - or a whole frame - `width`
+/// by `height`, as [`pen_matte`] draws a pen's: the shapes by their own
+/// distance, a pen by its corners. What a mask layer cuts the stack
+/// beneath it with, the frame being its picture. `None` for no size, or
+/// a pen with no corners.
+pub fn matte_of(
+    mask: &ShapeMask,
+    corners: Option<&[[f32; 2]]>,
+    width: u32,
+    height: u32,
+    stretch: (f32, f32),
+) -> Option<crate::frame::Frame> {
     if width == 0 || height == 0 {
         return None;
     }
@@ -441,13 +456,21 @@ pub fn pen_matte(
     // One matte texel in the picture's shorter side: the narrowest edge.
     let pixel = 1.0 / mw.min(mh) as f32;
     let uniform = mask.uniform_stretched(width as f32, height as f32, stretch, pixel);
-    let shape = PenShape::of(&uniform, corners);
+    let pen = match (mask.shape, corners) {
+        (MaskShape::Pen, Some(corners)) => Some(PenShape::of(&uniform, corners)),
+        (MaskShape::Pen, None) => return None,
+        _ => None,
+    };
     let mut pixels = vec![255u8; (mw * mh * 4) as usize];
     for row in 0..mh {
         let v = (row as f32 + 0.5) / mh as f32;
         for column in 0..mw {
             let u = (column as f32 + 0.5) / mw as f32;
-            let kept = shape.coverage(&uniform, u, v).clamp(0.0, 1.0);
+            let kept = match &pen {
+                Some(shape) => shape.coverage(&uniform, u, v),
+                None => coverage(&uniform, u, v),
+            }
+            .clamp(0.0, 1.0);
             pixels[((row * mw + column) * 4 + 3) as usize] = (kept * 255.0).round() as u8;
         }
     }
@@ -709,6 +732,26 @@ mod pen_tests {
         assert_eq!(alpha(300, 216), 0);
         assert_eq!(alpha(700, 216), 0, "past the box");
         assert!(pen_matte(&pen(), &RIGHT_HALF, 0, 10, (1.0, 1.0)).is_none());
+    }
+
+    /// A shape's matte over a whole frame keeps the shape: a circle in the
+    /// middle of a wide frame, round, and dark at the corners.
+    #[test]
+    fn a_shape_matte_covers_a_frame() {
+        let circle = ShapeMask {
+            shape: MaskShape::Circle,
+            ..ShapeMask::default()
+        };
+        let matte = matte_of(&circle, None, 1920, 1080, (1.0, 1.0)).expect("a matte");
+        assert_eq!((matte.width(), matte.height()), (768, 432));
+        let alpha = |x: u32, y: u32| matte.pixels()[((y * 768 + x) * 4 + 3) as usize];
+        assert_eq!(alpha(384, 216), 255, "the middle");
+        assert_eq!(alpha(5, 5), 0, "a corner");
+        // Radius 0.33 of the 432 short side is 142.6 texels, both ways.
+        assert_eq!(alpha(384 + 135, 216), 255);
+        assert_eq!(alpha(384 + 150, 216), 0);
+        assert_eq!(alpha(384, 216 + 135), 255);
+        assert!(matte_of(&pen(), None, 100, 100, (1.0, 1.0)).is_none());
     }
 
     /// A picture pulled to twice its width keeps a round circle: the edge

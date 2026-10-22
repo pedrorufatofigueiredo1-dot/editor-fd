@@ -36,9 +36,11 @@ impl Studio {
             self.notify(&t("mask.penNeedsClip"), false);
             return;
         };
-        let picture = self
-            .clip(&clip_id)
-            .is_some_and(|clip| clip.kind.is_visual() && !self.locked(&clip.track_id));
+        // A picture, or a mask layer, whose picture is the frame.
+        let picture = self.clip(&clip_id).is_some_and(|clip| {
+            (clip.kind.is_visual() || clip.kind == model::ClipKind::Layer)
+                && !self.locked(&clip.track_id)
+        });
         if !picture {
             self.notify(&t("mask.penNeedsClip"), false);
             return;
@@ -109,6 +111,25 @@ impl Studio {
                 ..Default::default()
             },
         });
+    }
+
+    /// The tray's Mask layer: a layer at the playhead, above everything,
+    /// whose mask cuts the stack beneath it - a rectangle in the middle to
+    /// start from, any shape or a pen drawing from the Mask section - and
+    /// selected, so its mask's grips are on the monitor at once.
+    pub(crate) fn add_mask_layer(&mut self) {
+        self.flush_commit();
+        let created = self.apply(Command::AddMaskLayer {
+            track_id: None,
+            start: f64::from(self.playhead),
+            duration: None,
+            mask: model::ClipMask::of(model::MaskShape::Rectangle),
+            name: t("mask.layerName"),
+        });
+        if let Some(id) = created {
+            self.transition_selected = None;
+            self.selection = vec![id];
+        }
     }
 
     /// The drawing's corners, for the overlay's dots.

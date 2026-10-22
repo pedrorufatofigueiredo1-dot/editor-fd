@@ -480,4 +480,44 @@ mod pen_tests {
         });
         assert!(bad.is_err(), "a corner that is not a number is refused");
     }
+
+    #[test]
+    fn a_mask_layer_is_a_layer_with_a_mask_and_no_effects_above_the_picture() {
+        let mut editor = Editor::new();
+        let title = editor
+            .apply(Command::AddTextClip {
+                track_id: None,
+                above: false,
+                start: 0.0,
+                style: None,
+                duration: Some(4.0),
+                offset_y: None,
+            })
+            .expect("a title")
+            .created_id
+            .expect("an id");
+        let layer = editor
+            .apply(Command::AddMaskLayer {
+                track_id: None,
+                start: 1.0,
+                duration: None,
+                mask: ClipMask::of(MaskShape::Heart),
+                name: "Mask".to_owned(),
+            })
+            .expect("laid")
+            .created_id
+            .expect("an id");
+        let timeline = editor.project().active();
+        let laid = timeline.clip(&layer).expect("the layer");
+        assert_eq!(laid.kind, crate::model::ClipKind::Layer);
+        assert!(laid.video_effects.is_empty());
+        assert_eq!(laid.mask.map(|mask| mask.shape), Some(MaskShape::Heart));
+        let lane = |id: &str| {
+            let track = &timeline.clip(id).expect("clip").track_id;
+            timeline.tracks.iter().position(|t| &t.id == track)
+        };
+        assert!(lane(&layer) > lane(&title), "above the picture");
+        editor.undo();
+        assert!(editor.project().active().clip(&layer).is_none(), "one step");
+    }
 }

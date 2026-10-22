@@ -1045,6 +1045,9 @@ export component VideoPanel inherits VerticalLayout {
     /// Whether the Mask section is here: the phone gives the mask a tool
     /// and a sheet of its own instead.
     in property <bool> mask-section: true;
+    /// The Mask section and nothing else: a mask layer's panel, whose
+    /// picture is the whole frame - nothing to place, crop or key.
+    in property <bool> mask-only: false;
 
     callback set(field: ClipField, value: float);
     /// A control gesture finished: the accumulated change becomes one command.
@@ -1174,7 +1177,7 @@ export component VideoPanel inherits VerticalLayout {
     init => { root.seed(); }
     changed selected => { root.seed(); }
 
-    Section {
+    if !root.mask-only: Section {
         first: true;
         transform := SectionHeader {
             title: I18n.t("clipInspector.transform");
@@ -1296,7 +1299,7 @@ export component VideoPanel inherits VerticalLayout {
     // What fills the frame where this picture does not reach: the
     // timeline's background, or one of the clip's own. Only on the lowest
     // picture lane, which is where a background is drawn.
-    if root.canvas && Backdrop.clip-has: Section {
+    if root.canvas && Backdrop.clip-has && !root.mask-only: Section {
         canvas := SectionHeader {
             title: I18n.t("phone.canvas");
             collapsible: true;
@@ -1319,7 +1322,7 @@ export component VideoPanel inherits VerticalLayout {
         }
     }
 
-    Section {
+    if !root.mask-only: Section {
         blend := SectionHeader {
             title: I18n.t("clipInspector.blend");
             collapsible: true;
@@ -1369,7 +1372,7 @@ export component VideoPanel inherits VerticalLayout {
     // The camera's shake taken out: the media's movement is measured once
     // in the background, and the correction is worked out from it live, so
     // the sliders answer at once. Footage only.
-    if root.selected.kind == ClipKind.video: Section {
+    if root.selected.kind == ClipKind.video && !root.mask-only: Section {
         stabilize := SectionHeader {
             title: I18n.t("clipInspector.stabilize");
             collapsible: true;
@@ -1442,7 +1445,7 @@ export component VideoPanel inherits VerticalLayout {
     // monitor over it - and chroma key drops a colour. A key is the chroma
     // package on the chain, which is why its knobs read from the chain's
     // own rows. One at a time: ticking a block unticks the others.
-    if !root.figure: Section {
+    if !root.figure && !root.mask-only: Section {
         cutout := SectionHeader {
             title: I18n.t("clipInspector.removeBackground");
             collapsible: true;
@@ -1657,7 +1660,8 @@ export component VideoPanel inherits VerticalLayout {
     // Drawn on the picture as it is seen, so it moves with the clip; the
     // monitor shows its outline with grips to drag while this is open.
     if root.mask-section
-        && (root.selected.kind == ClipKind.video || root.selected.kind == ClipKind.image): Section {
+        && (root.selected.kind == ClipKind.video || root.selected.kind == ClipKind.image
+            || root.mask-only): Section {
         mask-header := SectionHeader {
             title: I18n.t("mask.title");
             collapsible: true;
@@ -1839,7 +1843,7 @@ export component VideoPanel inherits VerticalLayout {
 
     // What is cut off the source before it is fitted. Fractions of the
     // source's own edges, so a crop survives a change of output size.
-    if !root.figure: Section {
+    if !root.figure && !root.mask-only: Section {
         crop := SectionHeader {
             title: I18n.t("clipInspector.crop");
             collapsible: true;

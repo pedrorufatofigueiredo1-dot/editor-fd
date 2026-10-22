@@ -843,6 +843,25 @@ pub enum Command {
         /// own tag.
         range: Option<ColorRange>,
     },
+    /// Lays a mask layer: a layer with no effects whose mask cuts the stack
+    /// beneath it to its shape, over the whole frame - outside it, black -
+    /// fixed on screen whatever the clips beneath do. Placed as
+    /// `AddLayerClip` places a layer, minting a "c" id.
+    AddMaskLayer {
+        /// The lane; None picks the first free one above the picture.
+        #[serde(default)]
+        track_id: Option<String>,
+        /// Timeline position in seconds, floored at 0.
+        start: f64,
+        /// Seconds on the timeline; the layers' default when absent.
+        #[serde(default)]
+        duration: Option<f64>,
+        /// The shape, its numbers over the frame as a clip's are over its
+        /// picture.
+        mask: ClipMask,
+        /// What the lane calls it.
+        name: String,
+    },
     /// Drops a marker on the active timeline at `time`: on its ruler, or
     /// on `clip_id` when one is named, where it is held in the clip's
     /// source seconds and travels with the clip. Mints a "k" id. An
@@ -1207,6 +1226,24 @@ impl Command {
                 .into_iter()
                 .flatten()
                 .copied()),
+            Command::AddMaskLayer {
+                start,
+                duration,
+                mask,
+                ..
+            } => {
+                bad([*start])
+                    || bad(*duration)
+                    || bad([
+                        mask.x,
+                        mask.y,
+                        mask.width,
+                        mask.height,
+                        mask.rotation,
+                        mask.roundness,
+                        mask.feather,
+                    ])
+            }
             Command::AddMarker { time, .. } => bad([*time]),
             Command::UpdateMarker { time, .. } => bad(*time),
             _ => false,
@@ -1275,6 +1312,7 @@ pub fn apply(
         | Command::AddTextClip { .. }
         | Command::AddShapeClip { .. }
         | Command::AddLayerClip { .. }
+        | Command::AddMaskLayer { .. }
         | Command::MoveClips { .. }
         | Command::TrimClip { .. }
         | Command::SplitClips { .. }

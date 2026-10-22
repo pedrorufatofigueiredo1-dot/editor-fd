@@ -734,6 +734,9 @@ pub struct PlannedTreatment {
     pub effects: Vec<ShaderPass>,
     /// How much of the treated stack to keep over the untreated, `0..=1`.
     pub strength: f32,
+    /// A mask layer's matte over the whole frame: the treated stack is kept
+    /// only by its alpha, black where it keeps nothing. `None` keeps all.
+    pub matte: Option<Arc<Frame>>,
 }
 
 /// Everything needed to draw one output frame.

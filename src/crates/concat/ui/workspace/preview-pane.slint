@@ -719,7 +719,9 @@ component StageOverlay inherits Rectangle {
         y: 0;
         width: root.width;
         height: root.height;
-        if entry.selected: StageItem {
+        // A mask layer has the frame for its picture: no box to move, only
+        // its mask's grips below.
+        if entry.selected && entry.kind != ClipKind.filter: StageItem {
             x: 0;
             y: 0;
             width: parent.width;

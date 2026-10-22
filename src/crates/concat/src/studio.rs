@@ -6113,6 +6113,8 @@ impl Studio {
                 }
                 item
             })
+            // Over every picture, as the layer is over the stack.
+            .chain(self.mask_layer_item())
             .collect()
     }
 
@@ -6120,11 +6122,28 @@ impl Studio {
     /// numbers at their ride's values; None for a clip with no mask or one
     /// that is not a picture.
     pub(crate) fn mask_frame(&self, clip: &Clip) -> Option<MaskFrame> {
-        let held = clip.mask.filter(|_| clip.kind.is_visual())?;
+        let layer = clip.kind == model::ClipKind::Layer;
+        let held = clip.mask.filter(|_| clip.kind.is_visual() || layer)?;
         let at = place_in(clip, self.playhead);
         let mut mask = held;
         for property in model::KeyProperty::MASK {
             mask.set(property, shown(clip, property, at));
+        }
+        // A mask layer's picture is the whole frame, unmoved: its mask is
+        // laid over the screen, whatever the clips beneath it do.
+        if layer {
+            return Some(MaskFrame::new(
+                mask,
+                &Footprint {
+                    cx: 0.5,
+                    cy: 0.5,
+                    w: 1.0,
+                    h: 1.0,
+                    rotation: 0.0,
+                },
+                self.output_size(),
+                (1.0, 1.0),
+            ));
         }
         Some(MaskFrame::new(
             mask,
@@ -6132,6 +6151,51 @@ impl Studio {
             self.output_size(),
             (clip.stretch_x, clip.stretch_y),
         ))
+    }
+
+    /// The selected mask layer as a stage item, so its outline and grips
+    /// are drawn over the frame: a layer has no picture of its own, and so
+    /// no place among the pictures.
+    fn mask_layer_item(&self) -> Option<StageItemData> {
+        let id = self.sole_selection()?;
+        let clip = self.clip(&id)?;
+        if clip.kind != model::ClipKind::Layer {
+            return None;
+        }
+        let playhead = f64::from(self.playhead);
+        if playhead < clip.start || playhead > clip.start + clip.duration {
+            return None;
+        }
+        let frame = self.mask_frame(clip)?;
+        let grips = frame.grips().map(|grip| frame.fraction(grip));
+        let mut item = StageItemData {
+            id: clip.id.as_str().into(),
+            kind: kind_of(clip),
+            selected: true,
+            cx: 0.5,
+            cy: 0.5,
+            w: 1.0,
+            h: 1.0,
+            rotation: 0.0,
+            scale: 1.0,
+            mask: model::MaskShape::ALL
+                .iter()
+                .position(|shape| *shape == frame.mask.shape)
+                .map_or(-1, |index| index as i32),
+            ..Default::default()
+        };
+        item.mask_path = if frame.mask.shape == model::MaskShape::Pen {
+            frame.pen_outline(&clip.mask_points).into()
+        } else {
+            frame.outline().into()
+        };
+        (item.mask_cx, item.mask_cy) = grips[0];
+        (item.mask_wx, item.mask_wy) = grips[1];
+        (item.mask_hx, item.mask_hy) = grips[2];
+        (item.mask_kx, item.mask_ky) = grips[3];
+        (item.mask_rx, item.mask_ry) = grips[4];
+        (item.mask_fx, item.mask_fy) = grips[5];
+        Some(item)
     }
 
     /// The topmost picture under a frame point, skipping locked lanes the
@@ -12644,6 +12708,8 @@ impl Studio {
             // M: a marker at the playhead, on the selected clip under it
             // or else on the ruler; see `add_marker`.
             "marker" => self.add_marker("auto"),
+            // The tray's add menu: a mask layer at the playhead.
+            "mask-layer" => self.add_mask_layer(),
             "split-tool" => {
                 self.lanes.tool = if self.lanes.tool == TimelineTool::Split {
                     TimelineTool::Select

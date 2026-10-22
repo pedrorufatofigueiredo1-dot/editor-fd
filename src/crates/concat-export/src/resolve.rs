@@ -222,11 +222,33 @@ pub(crate) struct Treatment {
     pub(crate) strength: f32,
     pub(crate) ramp_in: f64,
     pub(crate) ramp_out: f64,
+    /// A mask layer's shape, over the whole frame, and a pen's corners.
+    pub(crate) mask: Option<concat_core::mask::ShapeMask>,
+    pub(crate) pen: Option<std::sync::Arc<[[f32; 2]]>>,
 }
 
 impl Treatment {
     pub(crate) fn covers(&self, time: Rational) -> bool {
         self.start <= time && time < self.end
+    }
+
+    /// The treatment as the compositor takes it at `time`, for a frame
+    /// `width` by `height`: the passes, the strength, and a mask layer's
+    /// matte over the frame.
+    pub(crate) fn planned_at(
+        &self,
+        time: Rational,
+        width: u32,
+        height: u32,
+    ) -> concat_render::PlannedTreatment {
+        concat_render::PlannedTreatment {
+            track: self.track,
+            effects: self.passes_at(time),
+            strength: self.strength_at(time),
+            matte: self.mask.and_then(|mask| {
+                crate::matte_cached(&mask, self.pen.as_ref(), width, height, (1.0, 1.0))
+            }),
+        }
     }
 
     /// The shader passes at `time`, each keyed knob at its value there. A
@@ -298,7 +320,10 @@ pub(crate) fn build_timeline(
         // stack, kept beside the timeline rather than in it.
         if clip.kind == ClipKind::Layer {
             let effects = shaded(&clip.effects);
-            if !effects.is_empty() {
+            // A layer with a mask cuts the stack beneath it to its shape,
+            // with or without effects of its own: the mask layer.
+            let mask = clip.mask.map(|mask| mask.engine());
+            if !effects.is_empty() || mask.is_some() {
                 treatments.push(Treatment {
                     start,
                     end: start + duration,
@@ -307,6 +332,8 @@ pub(crate) fn build_timeline(
                     strength: clip.opacity.clamp(0.0, 1.0) as f32,
                     ramp_in: clip.fade_in.max(0.0),
                     ramp_out: clip.fade_out.max(0.0),
+                    mask,
+                    pen: pen_of(clip),
                 });
             }
             continue;
@@ -325,19 +352,7 @@ pub(crate) fn build_timeline(
         engine_clip.animation = animation_of(&clip.animation);
         engine_clip.blend = concat_core::timeline::Blend::parse(&clip.blend);
         engine_clip.mask = clip.mask.map(|mask| mask.engine());
-        // A pen's corners ride beside its numbers, for the executor to draw;
-        // two corners are no shape, and keep the picture whole.
-        engine_clip.pen = (clip
-            .mask
-            .is_some_and(|mask| mask.shape == concat_project::model::MaskShape::Pen)
-            && clip.mask_points.len() >= 3)
-            .then(|| {
-                clip.mask_points
-                    .iter()
-                    .map(|point| [point[0] as f32, point[1] as f32])
-                    .collect::<Vec<_>>()
-                    .into()
-            });
+        engine_clip.pen = pen_of(clip);
         engine_clip.transform = Transform {
             scale: clip.scale,
             offset_x: clip.offset_x,
@@ -443,6 +458,22 @@ pub(crate) struct PlannedGeometry {
 /// frame is seen. A stabilized clip always has them drawn by the plan,
 /// even when it has neither: its correction is of the whole picture as
 /// shot, before any crop, so the decoder must hand over the whole of it.
+/// A pen mask's corners, for the executor or a mask layer to draw: none
+/// unless the clip's mask is a pen with three corners or more - two are no
+/// shape, and keep the picture whole.
+pub(crate) fn pen_of(clip: &ExportClip) -> Option<std::sync::Arc<[[f32; 2]]>> {
+    let pen = clip
+        .mask
+        .is_some_and(|mask| mask.shape == concat_project::model::MaskShape::Pen);
+    (pen && clip.mask_points.len() >= 3).then(|| {
+        clip.mask_points
+            .iter()
+            .map(|point| [point[0] as f32, point[1] as f32])
+            .collect::<Vec<_>>()
+            .into()
+    })
+}
+
 pub(crate) fn planned_geometry(clip: &ExportClip) -> Option<PlannedGeometry> {
     let crop = clip
         .crop

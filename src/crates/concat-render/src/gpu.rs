@@ -1513,7 +1513,8 @@ impl WgpuCompositor {
             }
             let below = self.render_pooled(width, height, &draws, &vertices, wgpu::Color::BLACK);
             let strength = treatment.strength.clamp(0.0, 1.0);
-            if strength <= 0.0 || treatment.effects.is_empty() {
+            let matte = treatment.matte.as_deref();
+            if strength <= 0.0 || (treatment.effects.is_empty() && matte.is_none()) {
                 ground = Some(below);
                 continue;
             }
@@ -1521,7 +1522,26 @@ impl WgpuCompositor {
             // whatever stack sits beneath it - so `clip_time` falls back
             // to the timeline's own clock, exactly what a package read
             // before this existed.
-            let treated = self.run_passes(width, height, below, &treatment.effects, seconds, 0.0);
+            let mut treated = if treatment.effects.is_empty() {
+                below
+            } else {
+                self.run_passes(width, height, below, &treatment.effects, seconds, 0.0)
+            };
+            // A mask layer: the treated stack drawn through its matte over
+            // black, so beneath it only what the shape keeps is left.
+            if let Some(matte) = matte {
+                let mut draws = Vec::new();
+                let mut vertices = Vec::new();
+                self.push_pooled_through(
+                    &mut draws,
+                    &mut vertices,
+                    (width, height),
+                    treated,
+                    1.0,
+                    Some(matte),
+                );
+                treated = self.render_pooled(width, height, &draws, &vertices, wgpu::Color::BLACK);
+            }
             ground = Some(if strength >= 1.0 {
                 treated
             } else {
@@ -1700,7 +1720,21 @@ impl WgpuCompositor {
         index: usize,
         opacity: f32,
     ) {
-        let mask = self.mask_of(None);
+        self.push_pooled_through(draws, vertices, (width, height), index, opacity, None);
+    }
+
+    /// [`Self::push_pooled`] through a matte sampled across the whole
+    /// texture: what a mask layer cuts the stack beneath it with.
+    fn push_pooled_through(
+        &mut self,
+        draws: &mut Vec<Draw>,
+        vertices: &mut Vec<Vertex>,
+        (width, height): (u32, u32),
+        index: usize,
+        opacity: f32,
+        matte: Option<&Frame>,
+    ) {
+        let mask = self.mask_of(matte);
         draws.push(Draw {
             size: (width, height),
             texture: index,

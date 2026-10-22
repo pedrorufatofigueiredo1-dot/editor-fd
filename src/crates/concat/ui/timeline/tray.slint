@@ -103,6 +103,9 @@ component MenuItem inherits Rectangle {
 // https://github.com/slint-ui/slint/issues/7322
 component AddMenu inherits Rectangle {
     callback add-track(bottom: bool);
+    /// A mask layer at the playhead: a lane on top whose mask cuts
+    /// everything beneath it.
+    callback add-mask-layer();
 
     width: 26px;
     height: 26px;
@@ -119,8 +122,8 @@ component AddMenu inherits Rectangle {
     list := PopupWindow {
         x: 0;
         y: root.height + 4px;
-        width: 168px;
-        height: 2 * root.row-h + 8px;
+        width: 190px;
+        height: 3 * root.row-h + 8px;
         close-policy: close-on-click-outside;
 
         Rectangle {
@@ -145,6 +148,14 @@ component AddMenu inherits Rectangle {
                     clicked => {
                         list.close();
                         root.add-track(true);
+                    }
+                }
+                MenuItem {
+                    text: I18n.t("tray.addMaskLayer");
+                    trailing: Glyph.mask-pen;
+                    clicked => {
+                        list.close();
+                        root.add-mask-layer();
                     }
                 }
             }
@@ -216,6 +227,8 @@ export component TimelineTray inherits Rectangle {
     callback record-voiceover();
     /// Add a lane: on top of the stack, or with `bottom` under it.
     callback add-track(bottom: bool);
+    /// The add menu's mask layer; see AddMenu.
+    callback add-mask-layer();
     callback fit();
     callback zoom(factor: float);
     callback meters-shown-changed(on: bool);
@@ -240,6 +253,7 @@ export component TimelineTray inherits Rectangle {
 
         AddMenu {
             add-track(bottom) => { root.add-track(bottom); }
+            add-mask-layer => { root.add-mask-layer(); }
         }
 
         Divider { }

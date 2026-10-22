@@ -237,6 +237,35 @@ pub(super) fn apply(
             })
         }
 
+        Command::AddMaskLayer {
+            track_id,
+            start,
+            duration,
+            mask,
+            name,
+        } => {
+            let duration = duration
+                .unwrap_or(DEFAULT_LAYER_DURATION)
+                .max(MIN_CLIP_DURATION);
+            let timeline = project.active_mut();
+            let track_id = match track_id {
+                Some(id) if timeline.track(&id).is_some() => id,
+                Some(_) => return Err(CommandError::TrackGone),
+                None => first_free_track_above(timeline, start, duration)
+                    .unwrap_or_else(|| fresh_track(timeline, mint)),
+            };
+            let start = timeline.nearest_free_start(&track_id, start, duration.max(0.0), &[]);
+            let id = mint.next("c");
+            let mut clip =
+                Clip::blank(id.clone(), track_id, ClipKind::Layer, name, start, duration);
+            clip.mask = Some(mask.tidy());
+            timeline.clips.push(Arc::new(clip));
+            Ok(Outcome {
+                created_id: Some(id),
+                applied: true,
+            })
+        }
+
         Command::MoveClips { moves } => {
             let timeline = project.active_mut();
             // Onto another clip is never where a move lands: the group goes

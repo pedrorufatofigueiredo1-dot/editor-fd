@@ -415,6 +415,8 @@ export component TimelinePane inherits Rectangle {
                 root.transform-token += 1;
             }
             add-marker => { root.marker-add("auto"); }
+            // Through the clip verbs: Rust's shortcut table lays it.
+            add-mask-layer => { root.clip-verb("mask-layer"); }
             marker-menu-requested(x) => {
                 marker-menu.request-x = tray.absolute-position.x - root.absolute-position.x + x;
                 marker-menu.request-y = tray.absolute-position.y - root.absolute-position.y

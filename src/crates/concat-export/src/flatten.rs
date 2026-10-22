@@ -72,6 +72,9 @@ pub fn flatten_timeline_in(
                     effects: clip.video_effects.clone(),
                     opacity: clip.opacity,
                     has_audio: Some(false),
+                    // A mask layer's shape, over the whole frame.
+                    mask: clip.mask,
+                    mask_points: clip.mask_points.clone(),
                     ..ExportClip::blank(ClipKind::Layer, clip.start, clip.duration, index)
                 });
             }

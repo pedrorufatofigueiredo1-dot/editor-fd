@@ -702,10 +702,21 @@ export component ConfigPane inherits Rectangle {
                     commit => { root.clip-commit(); }
                 }
 
-                if root.showing == "Layer": FilterPanel {
-                    selected: root.selected;
-                    set(field, value) => { root.clip-set(field, value); }
-                    commit => { root.clip-commit(); }
+                // A layer's strength and chain, and under them its mask: a
+                // layer with a mask cuts the stack beneath it to the shape,
+                // over the whole frame - the mask layer.
+                if root.showing == "Layer": VerticalLayout {
+                    FilterPanel {
+                        selected: root.selected;
+                        set(field, value) => { root.clip-set(field, value); }
+                        commit => { root.clip-commit(); }
+                    }
+                    VideoPanel {
+                        mask-only: true;
+                        selected: root.selected;
+                        set(field, value) => { root.clip-set(field, value); }
+                        commit => { root.clip-commit(); }
+                    }
                 }
 
                 if root.showing == "Text": TextPanel {

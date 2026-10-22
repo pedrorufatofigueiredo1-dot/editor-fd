@@ -1402,20 +1402,21 @@ fn filled(
             filled.transform.stretch_x as f32,
             filled.transform.stretch_y as f32,
         );
-        filled.mask = pen_matte_cached(&shape, &corners, width, height, stretch);
+        filled.mask = matte_cached(&shape, Some(&corners), width, height, stretch);
         filled.shape = None;
     }
     filled
 }
 
-/// A pen mask's matte for a picture `width` by `height`, drawn once for
-/// each mask it is asked for: a mask that does not move is the same matte
-/// on every frame of its clip, and drawing one is a few hundred thousand
-/// distances. A handful are kept - one per masked clip on screen, and the
-/// ones a keyed mask has just passed through.
-fn pen_matte_cached(
+/// A mask's matte - a pen's on a picture, or a mask layer's over the frame
+/// - for a picture `width` by `height`, drawn once for each mask it is
+/// asked for: a mask that does not move is the same matte on every frame,
+/// and drawing one is a few hundred thousand distances. A handful are
+/// kept - one per mask on screen, and the ones a keyed mask has just
+/// passed through.
+pub(crate) fn matte_cached(
     mask: &concat_core::mask::ShapeMask,
-    corners: &std::sync::Arc<[[f32; 2]]>,
+    corners: Option<&std::sync::Arc<[[f32; 2]]>>,
     width: u32,
     height: u32,
     stretch: (f32, f32),
@@ -1425,7 +1426,8 @@ fn pen_matte_cached(
     use std::sync::{Arc, Mutex, OnceLock};
     static CACHE: OnceLock<Mutex<HashMap<u64, Arc<Frame>>>> = OnceLock::new();
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    for corner in corners.iter() {
+    mask.shape.code().to_bits().hash(&mut hasher);
+    for corner in corners.iter().flat_map(|corners| corners.iter()) {
         corner[0].to_bits().hash(&mut hasher);
         corner[1].to_bits().hash(&mut hasher);
     }
@@ -1446,8 +1448,12 @@ fn pen_matte_cached(
     if let Some(hit) = cache.lock().ok().and_then(|kept| kept.get(&key).cloned()) {
         return Some(hit);
     }
-    let matte = Arc::new(concat_core::mask::pen_matte(
-        mask, corners, width, height, stretch,
+    let matte = Arc::new(concat_core::mask::matte_of(
+        mask,
+        corners.map(|corners| &corners[..]),
+        width,
+        height,
+        stretch,
     )?);
     if let Ok(mut kept) = cache.lock() {
         if kept.len() >= 32 {
@@ -2045,11 +2051,7 @@ fn composite_treated(
     live.sort_by_key(|treatment| treatment.track);
     let planned: Vec<PlannedTreatment> = live
         .iter()
-        .map(|treatment| PlannedTreatment {
-            track: treatment.track,
-            effects: treatment.passes_at(time),
-            strength: treatment.strength_at(time),
-        })
+        .map(|treatment| treatment.planned_at(time, plan.width, plan.height))
         .collect();
     // A packaged transition live at this instant combines the outgoing stack
     // with the incoming picture through its shader, and an adjustment layer
@@ -2420,11 +2422,7 @@ pub fn preview_sources_of(
     frame_plan.treatments = treatments
         .iter()
         .filter(|treatment| treatment.covers(time))
-        .map(|treatment| PlannedTreatment {
-            track: treatment.track,
-            effects: treatment.passes_at(time),
-            strength: treatment.strength_at(time),
-        })
+        .map(|treatment| treatment.planned_at(time, plan.width, plan.height))
         .collect();
     frame_plan
         .treatments
@@ -2634,6 +2632,8 @@ mod tests {
             strength: 1.0,
             ramp_in: 0.0,
             ramp_out: 0.0,
+            mask: None,
+            pen: None,
         };
         let Some(mut compositor) = WgpuCompositor::new() else {
             return; // no renderer here
@@ -2724,6 +2724,8 @@ mod tests {
             strength: 1.0,
             ramp_in: 0.0,
             ramp_out: 0.0,
+            mask: None,
+            pen: None,
         };
         let Some(mut gpu) = WgpuCompositor::new() else {
             return; // no renderer here

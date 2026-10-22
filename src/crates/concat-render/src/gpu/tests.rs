@@ -327,6 +327,7 @@ fn a_treatment_treats_the_stack_beneath_its_track_only() {
             track: 1,
             effects: vec![package("concat.invert", INVERT, "", &[], 1.0)],
             strength,
+            matte: None,
         }],
         ..plan(8, 8, vec![ground.clone(), blue.clone()])
     };
@@ -343,6 +344,43 @@ fn a_treatment_treats_the_stack_beneath_its_track_only() {
         p.iter().all(|channel| (189..=193).contains(channel)),
         "{p:?}"
     );
+}
+
+/// A mask layer - a treatment with a matte and no passes - keeps the stack
+/// beneath it only where the matte does, black elsewhere, and leaves what
+/// is drawn above it whole: the left half of a red ground stays, the right
+/// goes black, and a blue quarter on top in the right half is still blue.
+#[test]
+fn a_mask_layer_cuts_the_stack_beneath_it_to_its_matte() {
+    let Some(mut gpu) = gpu() else { return };
+    let ground = layer(solid(8, 8, [255, 0, 0, 255]));
+    let mut blue = layer(solid(4, 4, [0, 0, 255, 255]));
+    blue.track = 2;
+    blue.transform = Transform {
+        offset_x: 2.0 / 8.0,
+        offset_y: -2.0 / 8.0,
+        ..Transform::default()
+    };
+    let mut matte = Frame::transparent(8, 8);
+    for y in 0..8 {
+        for x in 0..4 {
+            matte.set_pixel(x, y, [255, 255, 255, 255]);
+        }
+    }
+    let plan = FramePlan {
+        treatments: vec![PlannedTreatment {
+            track: 1,
+            effects: Vec::new(),
+            strength: 1.0,
+            matte: Some(Arc::new(matte)),
+        }],
+        ..plan(8, 8, vec![ground, blue])
+    };
+    let out = gpu.render(&plan);
+    let at = |x: u32, y: u32| out.pixel(x, y).expect("a pixel");
+    assert_eq!(&at(1, 6)[..3], &[255, 0, 0], "kept, left");
+    assert_eq!(&at(6, 6)[..3], &[0, 0, 0], "cut, right");
+    assert_eq!(&at(6, 1)[..3], &[0, 0, 255], "drawn above the layer");
 }
 
 /// The parity suite: one plan per thing a frame is made of besides its
