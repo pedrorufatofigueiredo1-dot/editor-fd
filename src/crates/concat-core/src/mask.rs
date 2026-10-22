@@ -34,6 +34,12 @@ pub enum MaskShape {
     Heart,
     /// A five-pointed star, point up.
     Star,
+    /// A shape drawn point by point, as Filmora's pen draws one: a polygon
+    /// whose corners are the clip's own (`pen_matte`), laid in the mask's
+    /// box. Not drawn analytically - it has more corners than a uniform
+    /// carries - so it is outside [`MaskShape::ALL`], and the executor
+    /// hands it to the compositor as a matte.
+    Pen,
 }
 
 impl MaskShape {
@@ -56,6 +62,7 @@ impl MaskShape {
             MaskShape::Rectangle => "rectangle",
             MaskShape::Heart => "heart",
             MaskShape::Star => "star",
+            MaskShape::Pen => "pen",
         }
     }
 
@@ -63,6 +70,7 @@ impl MaskShape {
     pub fn parse(name: &str) -> Option<MaskShape> {
         MaskShape::ALL
             .into_iter()
+            .chain([MaskShape::Pen])
             .find(|shape| shape.name() == name.trim())
     }
 
@@ -76,6 +84,9 @@ impl MaskShape {
             MaskShape::Rectangle => 4.0,
             MaskShape::Heart => 5.0,
             MaskShape::Star => 6.0,
+            // The shader knows no seventh shape and keeps everything; a pen
+            // reaches the compositor as a matte instead (`pen_matte`).
+            MaskShape::Pen => 7.0,
         }
     }
 
@@ -295,6 +306,126 @@ fn heart(p: [f32; 2]) -> f32 {
     dot2([x, y - 1.0]).min(dot2([x - m, y - m])).sqrt() * sign(x - y)
 }
 
+/// The signed distance from a closed polygon's edge at `p`: negative
+/// inside, by the even-odd rule, so a shape that crosses itself keeps what
+/// a hand drawing it would expect. Quilez's `sdPolygon`. Fewer than three
+/// corners is no shape: everything is outside.
+pub fn polygon_distance(p: [f32; 2], corners: &[[f32; 2]]) -> f32 {
+    if corners.len() < 3 {
+        return f32::MAX;
+    }
+    let first = corners[0];
+    let mut d = dot2([p[0] - first[0], p[1] - first[1]]);
+    let mut s = 1.0;
+    let mut j = corners.len() - 1;
+    for (i, &vi) in corners.iter().enumerate() {
+        let vj = corners[j];
+        let e = [vj[0] - vi[0], vj[1] - vi[1]];
+        let w = [p[0] - vi[0], p[1] - vi[1]];
+        let along = ((w[0] * e[0] + w[1] * e[1]) / dot2(e).max(1e-12)).clamp(0.0, 1.0);
+        let b = [w[0] - e[0] * along, w[1] - e[1] * along];
+        d = d.min(dot2(b));
+        let up = p[1] >= vi[1];
+        let below = p[1] < vj[1];
+        let left = e[0] * w[1] > e[1] * w[0];
+        if (up && below && left) || (!up && !below && !left) {
+            s = -s;
+        }
+        j = i;
+    }
+    s * d.sqrt()
+}
+
+impl ShapeMask {
+    /// How much of the picture a pen mask keeps at `u`, `v`, as
+    /// [`ShapeMask::coverage`] reckons the other shapes: `corners` are the
+    /// polygon's, each a fraction of the mask's box from its centre, `-0.5`
+    /// to `0.5` across and down, so moving, sizing, turning and softening
+    /// the box move, size, turn and soften the drawing.
+    pub fn pen_coverage(
+        &self,
+        corners: &[[f32; 2]],
+        u: f32,
+        v: f32,
+        width: f32,
+        height: f32,
+        pixel: f32,
+    ) -> f32 {
+        let uniform = self.uniform(width, height, pixel);
+        let shape = PenShape::of(&uniform, corners);
+        shape.coverage(&uniform, u, v)
+    }
+}
+
+/// A pen's corners laid out in the box's short-side units once, for the
+/// many pixels a matte asks about.
+struct PenShape {
+    corners: Vec<[f32; 2]>,
+}
+
+impl PenShape {
+    fn of(uniform: &MaskUniform, corners: &[[f32; 2]]) -> PenShape {
+        let [_, _, half_w, half_h] = uniform.b;
+        PenShape {
+            corners: corners
+                .iter()
+                .map(|c| [c[0] * 2.0 * half_w, c[1] * 2.0 * half_h])
+                .collect(),
+        }
+    }
+
+    /// `coverage`'s arithmetic with the polygon's distance in the shape's.
+    fn coverage(&self, mask: &MaskUniform, u: f32, v: f32) -> f32 {
+        let [_, invert, band, _] = mask.a;
+        let [x, y, _, _] = mask.b;
+        let [cos, sin, aspect_w, aspect_h] = mask.c;
+        let dx = (u - 0.5 - x) * aspect_w;
+        let dy = (v - 0.5 - y) * aspect_h;
+        let p = [dx * cos + dy * sin, -dx * sin + dy * cos];
+        let d = polygon_distance(p, &self.corners);
+        let kept = 1.0 - smoothstep(-band * 0.5, band * 0.5, d);
+        if invert > 0.5 { 1.0 - kept } else { kept }
+    }
+}
+
+/// The longest side of the matte a pen mask is drawn into: sampled across
+/// the picture with filtering, so a few hundred texels make an edge as
+/// clean as the screen shows, at a cost paid once per change of the mask.
+pub const PEN_MATTE_SIDE: u32 = 768;
+
+/// A pen mask drawn into a matte for a picture `width` by `height`: white,
+/// its alpha what is kept, at most [`PEN_MATTE_SIDE`] on its longer side
+/// and in the picture's aspect, which is what the compositor samples it
+/// across. `None` for a picture with no size.
+pub fn pen_matte(
+    mask: &ShapeMask,
+    corners: &[[f32; 2]],
+    width: u32,
+    height: u32,
+) -> Option<crate::frame::Frame> {
+    if width == 0 || height == 0 {
+        return None;
+    }
+    let long = width.max(height) as f32;
+    let fit = (PEN_MATTE_SIDE as f32 / long).min(1.0);
+    let mw = ((width as f32 * fit).round() as u32).max(1);
+    let mh = ((height as f32 * fit).round() as u32).max(1);
+    // One matte texel in the picture's shorter side: the narrowest edge.
+    let pixel = 1.0 / mw.min(mh) as f32;
+    let uniform = mask.uniform(width as f32, height as f32, pixel);
+    let shape = PenShape::of(&uniform, corners);
+    let mut pixels = vec![255u8; (mw * mh * 4) as usize];
+    for row in 0..mh {
+        let v = (row as f32 + 0.5) / mh as f32;
+        for column in 0..mw {
+            let u = (column as f32 + 0.5) / mw as f32;
+            let kept = shape.coverage(&uniform, u, v).clamp(0.0, 1.0);
+            pixels[((row * mw + column) * 4 + 3) as usize] = (kept * 255.0).round() as u8;
+        }
+    }
+    crate::frame::Frame::from_rgba(mw, mh, pixels)
+}
+
 /// Quilez's five-pointed star, outer radius one, y up, a point straight up.
 fn star(x: f32, y: f32) -> f32 {
     const K1: [f32; 2] = [0.809_017, -0.587_785_24];
@@ -485,5 +616,70 @@ mod tests {
         let value = kept(&broken, 0.5, 0.5);
         assert!(value.is_finite());
         assert_eq!(coverage(&MaskUniform::NONE, 0.1, 0.9), 1.0);
+    }
+}
+
+#[cfg(test)]
+mod pen_tests {
+    use super::*;
+
+    /// A pen mask whose box is the whole of a square picture.
+    fn pen() -> ShapeMask {
+        ShapeMask {
+            shape: MaskShape::Pen,
+            width: 1.0,
+            height: 1.0,
+            ..ShapeMask::default()
+        }
+    }
+
+    /// The right half of the box, drawn as four corners.
+    const RIGHT_HALF: [[f32; 2]; 4] = [[0.0, -0.5], [0.5, -0.5], [0.5, 0.5], [0.0, 0.5]];
+
+    #[test]
+    fn a_polygon_is_negative_inside_and_exact_on_its_edge() {
+        let square = [[-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0]];
+        assert!((polygon_distance([0.0, 0.0], &square) + 1.0).abs() < 1e-6);
+        assert!(polygon_distance([1.0, 0.0], &square).abs() < 1e-6);
+        assert!((polygon_distance([3.0, 0.0], &square) - 2.0).abs() < 1e-6);
+        // Wound the other way, it is the same shape.
+        let mut back = square;
+        back.reverse();
+        assert!((polygon_distance([0.0, 0.0], &back) + 1.0).abs() < 1e-6);
+        // Two corners are a line, not a shape.
+        assert!(polygon_distance([0.0, 0.0], &square[..2]) > 1.0);
+    }
+
+    #[test]
+    fn a_pen_keeps_what_was_drawn_and_turns_with_its_box() {
+        let mask = pen();
+        let kept = |m: &ShapeMask, u, v| m.pen_coverage(&RIGHT_HALF, u, v, 100.0, 100.0, 0.01);
+        assert!(kept(&mask, 0.75, 0.5) > 0.999, "inside the drawing");
+        assert!(kept(&mask, 0.25, 0.5) < 0.001, "outside it");
+        let inverted = ShapeMask {
+            invert: true,
+            ..mask
+        };
+        assert!(kept(&inverted, 0.25, 0.5) > 0.999);
+        // A half turn of the box puts the drawing on the left.
+        let turned = ShapeMask {
+            rotation: 180.0,
+            ..mask
+        };
+        assert!(kept(&turned, 0.25, 0.5) > 0.999);
+        assert!(kept(&turned, 0.75, 0.5) < 0.001);
+    }
+
+    #[test]
+    fn a_pen_matte_is_in_the_pictures_aspect_and_keeps_by_its_alpha() {
+        let matte = pen_matte(&pen(), &RIGHT_HALF, 1920, 1080).expect("a matte");
+        assert_eq!((matte.width(), matte.height()), (768, 432));
+        let alpha = |x: u32, y: u32| matte.pixels()[((y * 768 + x) * 4 + 3) as usize];
+        // The box is the picture's height square in the middle of a wide
+        // picture: its right half is the middle of the frame and a bit.
+        assert_eq!(alpha(500, 216), 255);
+        assert_eq!(alpha(300, 216), 0);
+        assert_eq!(alpha(700, 216), 0, "past the box");
+        assert!(pen_matte(&pen(), &RIGHT_HALF, 0, 10).is_none());
     }
 }

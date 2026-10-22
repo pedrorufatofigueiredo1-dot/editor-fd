@@ -841,17 +841,21 @@ pub enum MaskShape {
     Heart,
     /// A five-pointed star, point up.
     Star,
+    /// A shape drawn corner by corner on the monitor, as Filmora's pen
+    /// draws one: [`Clip::mask_points`], laid in the mask's box.
+    Pen,
 }
 
 impl MaskShape {
     /// Every shape, in the order the pickers list them.
-    pub const ALL: [MaskShape; 6] = [
+    pub const ALL: [MaskShape; 7] = [
         MaskShape::Linear,
         MaskShape::Mirror,
         MaskShape::Circle,
         MaskShape::Rectangle,
         MaskShape::Heart,
         MaskShape::Star,
+        MaskShape::Pen,
     ];
 
     /// The engine's shape.
@@ -864,8 +868,25 @@ impl MaskShape {
             MaskShape::Rectangle => Engine::Rectangle,
             MaskShape::Heart => Engine::Heart,
             MaskShape::Star => Engine::Star,
+            MaskShape::Pen => Engine::Pen,
         }
     }
+}
+
+/// The most corners a pen mask keeps: far more than a hand clicks, few
+/// enough that drawing its matte stays cheap.
+pub const MAX_PEN_POINTS: usize = 256;
+
+/// A pen mask's corners as a document may hold them: finite, inside the
+/// mask's box (`-0.5..=0.5` each way), and no more than
+/// [`MAX_PEN_POINTS`]. What the reader and the command both run.
+pub fn tidy_pen(points: Vec<[f64; 2]>) -> Vec<[f64; 2]> {
+    points
+        .into_iter()
+        .filter(|point| point[0].is_finite() && point[1].is_finite())
+        .map(|point| [point[0].clamp(-0.5, 0.5), point[1].clamp(-0.5, 0.5)])
+        .take(MAX_PEN_POINTS)
+        .collect()
 }
 
 /// A shape that keeps part of a clip's picture: CapCut's Mask. Drawn over
@@ -928,7 +949,7 @@ impl ClipMask {
             MaskShape::Linear => (1.0, 1.0),
             MaskShape::Mirror => (1.0, 0.33),
             MaskShape::Rectangle => (0.8, 0.5),
-            MaskShape::Circle | MaskShape::Heart | MaskShape::Star => (0.66, 0.66),
+            MaskShape::Circle | MaskShape::Heart | MaskShape::Star | MaskShape::Pen => (0.66, 0.66),
         };
         ClipMask {
             shape,
@@ -1834,6 +1855,13 @@ pub struct Clip {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(deserialize_with = "wire::maybe")]
     pub mask: Option<ClipMask>,
+    /// A pen mask's corners, in order, each a fraction of the mask's box
+    /// from its centre: `-0.5..=0.5` across its width and down its height.
+    /// What [`MaskShape::Pen`] keeps; kept when the mask changes shape, so
+    /// a drawing put back on is the drawing that was there.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(deserialize_with = "wire::list")]
+    pub mask_points: Vec<[f64; 2]>,
     /// The camera's shake taken out; see [`Stabilize`]. None is off.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(deserialize_with = "wire::maybe")]
@@ -2023,6 +2051,7 @@ impl Clip {
             crop: None,
             cutout: None,
             mask: None,
+            mask_points: Vec::new(),
             stabilize: None,
             filters: Vec::new(),
             video_effects: Vec::new(),
@@ -2103,6 +2132,7 @@ impl Clip {
             .filter(|crop| !crop.is_none());
         self.cutout = self.cutout.take().map(Cutout::tidy);
         self.mask = self.mask.take().map(ClipMask::tidy);
+        self.mask_points = tidy_pen(std::mem::take(&mut self.mask_points));
         self.stabilize = self.stabilize.take().map(Stabilize::tidy);
         if let Some(transition) = self.transition_in.as_mut() {
             transition.duration = finite(transition.duration, 1.0).max(MIN_TRANSITION);

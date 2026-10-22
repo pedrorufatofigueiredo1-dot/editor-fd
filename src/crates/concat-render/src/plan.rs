@@ -288,6 +288,10 @@ pub struct PlannedLayer {
     /// with `mask`, the crop and everything else that weighs the picture.
     /// `None` keeps it whole.
     pub shape: Option<ShapeMask>,
+    /// A pen mask's corners, when `shape` is a pen: the executor draws them
+    /// into `mask` once it knows the picture's size (`pen_matte`), since a
+    /// drawing has more corners than the shader's uniform carries.
+    pub pen: Option<Arc<[[f32; 2]]>>,
     /// What the cuts at either end do to the picture at this frame.
     pub transitions: Vec<Transition>,
     /// How the layer's colour meets what is beneath it.
@@ -318,6 +322,7 @@ impl PlannedLayer {
             effects: Vec::new(),
             mask: None,
             shape: None,
+            pen: None,
             transitions: Vec::new(),
             blend: Blend::Normal,
             opacity: 1.0,
@@ -454,6 +459,7 @@ impl PlannedLayer {
             // The picture's shape mask is the picture's: the background
             // fills the frame behind it, and shows where the mask cuts.
             shape: None,
+            pen: None,
             blend: Blend::Normal,
             ..self.clone()
         };
@@ -823,6 +829,7 @@ pub fn plan_frame(timeline: &Timeline, time: Rational) -> FramePlan {
             effects: Vec::new(),
             mask: None,
             shape: clip.mask_at(time),
+            pen: clip.pen.clone(),
             transitions: Vec::new(),
             blend: clip.blend,
             // The fade ramp multiplies in here, so the compositor only ever

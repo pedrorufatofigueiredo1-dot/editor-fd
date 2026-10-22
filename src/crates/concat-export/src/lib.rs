@@ -220,6 +220,10 @@ pub struct ExportClip {
     /// it; its keyed numbers ride in `animation` as `maskX` and on.
     #[serde(default)]
     pub mask: Option<ClipMask>,
+    /// A pen mask's corners, as the document holds them; see
+    /// `Clip::mask_points`.
+    #[serde(default)]
+    pub mask_points: Vec<[f64; 2]>,
     /// Draw the cutout tinted over the whole picture instead of cutting
     /// it: the view while the clip's brushes are in use. Preview only.
     #[serde(default)]
@@ -348,6 +352,7 @@ impl ExportClip {
             has_audio: None,
             cutout: None,
             mask: None,
+            mask_points: Vec::new(),
             mask_dir: String::new(),
             stabilize: None,
             motion_dir: String::new(),
@@ -1380,7 +1385,69 @@ fn filled(
         filled.flip_h = geometry.flip_h;
         filled.flip_v = geometry.flip_v;
     }
+    // A pen mask reaches the compositor as a matte over the picture as it
+    // is seen - after the crop, as the shape masks are measured - drawn
+    // here, where the picture's size is known at last.
+    if let (Some(shape), Some(corners)) = (filled.shape, filled.pen.clone())
+        && shape.shape == concat_core::mask::MaskShape::Pen
+        && let Some(source) = filled.source.as_deref()
+    {
+        let crop = filled.crop;
+        let seen = |side: u32, cut: f32| {
+            ((side as f32 * (1.0 - cut).clamp(0.01, 1.0)).round() as u32).max(1)
+        };
+        let width = seen(source.width(), crop.left + crop.right);
+        let height = seen(source.height(), crop.top + crop.bottom);
+        filled.mask = pen_matte_cached(&shape, &corners, width, height);
+        filled.shape = None;
+    }
     filled
+}
+
+/// A pen mask's matte for a picture `width` by `height`, drawn once for
+/// each mask it is asked for: a mask that does not move is the same matte
+/// on every frame of its clip, and drawing one is a few hundred thousand
+/// distances. A handful are kept - one per masked clip on screen, and the
+/// ones a keyed mask has just passed through.
+fn pen_matte_cached(
+    mask: &concat_core::mask::ShapeMask,
+    corners: &std::sync::Arc<[[f32; 2]]>,
+    width: u32,
+    height: u32,
+) -> Option<std::sync::Arc<Frame>> {
+    use std::collections::HashMap;
+    use std::hash::{Hash, Hasher};
+    use std::sync::{Arc, Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<HashMap<u64, Arc<Frame>>>> = OnceLock::new();
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for corner in corners.iter() {
+        corner[0].to_bits().hash(&mut hasher);
+        corner[1].to_bits().hash(&mut hasher);
+    }
+    for number in [
+        mask.x,
+        mask.y,
+        mask.width,
+        mask.height,
+        mask.rotation,
+        mask.feather,
+    ] {
+        number.to_bits().hash(&mut hasher);
+    }
+    (mask.invert, width, height).hash(&mut hasher);
+    let key = hasher.finish();
+    let cache = CACHE.get_or_init(Default::default);
+    if let Some(hit) = cache.lock().ok().and_then(|kept| kept.get(&key).cloned()) {
+        return Some(hit);
+    }
+    let matte = Arc::new(concat_core::mask::pen_matte(mask, corners, width, height)?);
+    if let Ok(mut kept) = cache.lock() {
+        if kept.len() >= 32 {
+            kept.clear();
+        }
+        kept.insert(key, Arc::clone(&matte));
+    }
+    Some(matte)
 }
 
 /// The plan's transitions for `layer` at `time`, from its clip's shapes.

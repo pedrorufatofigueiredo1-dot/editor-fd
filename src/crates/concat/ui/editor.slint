@@ -13,7 +13,7 @@ import { DockDivider, DockSide, SeatBox } from "dock.slint";
 import { PaneKind } from "workspace/pane-switcher.slint";
 import { MenuItemData } from "primitives/context-menu.slint";
 import {
-    AiRangeData, ClipData, ClipField, ClipTextField, DropData, GapData, MarkerData,
+    AiRangeData, ClipData, ClipField, ClipTextField, DropData, GapData, MarkerData, PenPointData,
     SelectedClipData, SelectedTransitionData, StageGuideData, StageItemData, TimelineTabData,
     TimelineTool, TrackData,
     TrackSize,
@@ -278,6 +278,16 @@ export global Editor {
     in-out property <int> brush-tool;
     in-out property <float> brush-size;
     in-out property <bool> painting;
+    /// A pen mask being drawn on the monitor: its corners so far, in
+    /// fractions of the frame, and its lines on the overlay's thousand-unit
+    /// box. A click lays a corner, a click on the first closes the shape,
+    /// and the right button takes the last back.
+    in-out property <bool> pen-active;
+    in-out property <[PenPointData]> pen-points;
+    in-out property <string> pen-path;
+    callback pen-clicked(x: float, y: float);
+    callback pen-closed();
+    callback pen-back();
     /// The stroke under the pointer, as path commands over a 1000 × 1000
     /// viewbox of the stage; empty between strokes. The width is a fraction
     /// of the stage's width; `erase` colours the line for a tool that takes

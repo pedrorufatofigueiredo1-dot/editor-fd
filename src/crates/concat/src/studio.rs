@@ -47,7 +47,7 @@ use concat_project::{Command, PlayheadSide};
 mod backdrop;
 mod consolidate;
 use consolidate::MergeJob;
-mod masking;
+pub(crate) mod masking;
 use masking::{MaskFrame, MaskGrip};
 use slint::{Model, ModelRc, SharedString, VecModel};
 
@@ -687,6 +687,8 @@ pub struct Models {
     pub key_marks: Rc<VecModel<f32>>,
     /// The markers' flags; see `Studio::marker_rows`.
     pub markers: Rc<VecModel<MarkerData>>,
+    /// The pen's corners while a mask is drawn; see `Studio::pen_rows`.
+    pub pen_points: Rc<VecModel<PenPointData>>,
     pub library_views: Rc<VecModel<LibraryViewData>>,
     pub menu: Rc<VecModel<MenuItemData>>,
     pub bar: Rc<VecModel<MenuItemData>>,
@@ -771,6 +773,7 @@ impl Models {
             key_editor_rows: Rc::new(VecModel::default()),
             key_marks: Rc::new(VecModel::default()),
             markers: Rc::new(VecModel::default()),
+            pen_points: Rc::new(VecModel::default()),
             library_views: Rc::new(VecModel::default()),
             menu: Rc::new(VecModel::default()),
             bar: Rc::new(VecModel::default()),
@@ -1083,6 +1086,8 @@ pub struct Studio {
     /// Whether a press on the stage paints the selected custom cutout
     /// rather than moving the picture.
     pub painting: bool,
+    /// A pen mask being drawn on the monitor; see `pen.rs`.
+    pub pen: Option<crate::pen::PenDraft>,
     /// The mask analyses running, by media id, and how far each has got.
     cutout_jobs: HashMap<String, (bool, f32)>,
     /// The stabilization analyses running, by media id, and how far each
@@ -2446,6 +2451,7 @@ impl Studio {
             brush: 0,
             brush_size: 0.06,
             painting: true,
+            pen: None,
             cutout_jobs: HashMap::new(),
             stabilize_jobs: HashMap::new(),
             stabilize_retry: HashSet::new(),
@@ -5332,6 +5338,19 @@ impl Studio {
     /// One field of the selected clip, on the echo. `clip_commit` turns the
     /// accumulated edits into commands.
     pub fn clip_set(&mut self, field: ClipField, value: f32) {
+        // The Mask section's Pen does not set a shape: it starts a drawing
+        // on the monitor, and the shape lands when the drawing is closed.
+        if field == ClipField::MaskShape
+            && value >= 0.0
+            && model::MaskShape::ALL.get(value as usize) == Some(&model::MaskShape::Pen)
+        {
+            self.start_pen();
+            return;
+        }
+        // Any other shape, or none, leaves a drawing under way.
+        if field == ClipField::MaskShape {
+            self.pen = None;
+        }
         let mut ids = self.edit_targets();
         // A batch of sounds takes the level alone; see `batch_volume`.
         let batch_volume = ids.is_empty() && field == ClipField::Volume;
@@ -6080,7 +6099,11 @@ impl Studio {
                         .iter()
                         .position(|shape| *shape == frame.mask.shape)
                         .map_or(-1, |index| index as i32);
-                    item.mask_path = frame.outline().into();
+                    item.mask_path = if frame.mask.shape == model::MaskShape::Pen {
+                        frame.pen_outline(&clip.mask_points).into()
+                    } else {
+                        frame.outline().into()
+                    };
                     (item.mask_cx, item.mask_cy) = grips[0];
                     (item.mask_wx, item.mask_wy) = grips[1];
                     (item.mask_hx, item.mask_hy) = grips[2];
@@ -6096,7 +6119,7 @@ impl Studio {
     /// The clip's mask placed in the frame at the playhead, its keyed
     /// numbers at their ride's values; None for a clip with no mask or one
     /// that is not a picture.
-    fn mask_frame(&self, clip: &Clip) -> Option<MaskFrame> {
+    pub(crate) fn mask_frame(&self, clip: &Clip) -> Option<MaskFrame> {
         let held = clip.mask.filter(|_| clip.kind.is_visual())?;
         let at = place_in(clip, self.playhead);
         let mut mask = held;
@@ -9054,6 +9077,7 @@ impl Studio {
             self.host.open_projects.release(session.path());
         }
         self.session = None;
+        self.pen = None;
         self.ai_marks = Marks::default();
         // Whatever a worker still brings back for this project is dropped
         // at delivery; the sheets that were waiting on one stop waiting.
@@ -9705,6 +9729,10 @@ impl Studio {
         editor.set_brush_tool(self.brush as i32);
         editor.set_brush_size(self.brush_size as f32);
         editor.set_painting(self.painting);
+        // The pen's drawing, while one is under way.
+        sync(&models.pen_points, self.pen_rows());
+        editor.set_pen_path(self.pen_path().into());
+        editor.set_pen_active(self.pen.is_some());
 
         editor.set_drop(match &self.drop {
             Some(plan) => DropData {

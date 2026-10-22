@@ -325,6 +325,19 @@ pub(crate) fn build_timeline(
         engine_clip.animation = animation_of(&clip.animation);
         engine_clip.blend = concat_core::timeline::Blend::parse(&clip.blend);
         engine_clip.mask = clip.mask.map(|mask| mask.engine());
+        // A pen's corners ride beside its numbers, for the executor to draw;
+        // two corners are no shape, and keep the picture whole.
+        engine_clip.pen = (clip
+            .mask
+            .is_some_and(|mask| mask.shape == concat_project::model::MaskShape::Pen)
+            && clip.mask_points.len() >= 3)
+            .then(|| {
+                clip.mask_points
+                    .iter()
+                    .map(|point| [point[0] as f32, point[1] as f32])
+                    .collect::<Vec<_>>()
+                    .into()
+            });
         engine_clip.transform = Transform {
             scale: clip.scale,
             offset_x: clip.offset_x,

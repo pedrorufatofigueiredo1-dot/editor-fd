@@ -11,7 +11,7 @@ import { NumberField } from "../primitives/number-field.slint";
 import { Select } from "../primitives/select.slint";
 import { Pane, PaneHeader } from "pane.slint";
 import { PaneKind, PaneSwitcher } from "pane-switcher.slint";
-import { ClipKind, StageGuideData, StageItemData } from "../timeline/model.slint";
+import { ClipKind, PenPointData, StageGuideData, StageItemData } from "../timeline/model.slint";
 import { ContextMenu, MenuMetrics, MenuRow } from "../primitives/context-menu.slint";
 
 // The programme monitor: a header that says what the output is, a stage on a
@@ -604,6 +604,14 @@ component StageOverlay inherits Rectangle {
     in property <float> stroke-width;
     in property <bool> stroke-erase;
     in property <bool> painting;
+    /// A pen mask being drawn: everything else on the stage waits while a
+    /// click lays a corner; see the layer at the end.
+    in property <bool> pen-active;
+    in property <[PenPointData]> pen-points;
+    in property <string> pen-path;
+    callback pen-clicked(x: float, y: float);
+    callback pen-closed();
+    callback pen-back();
 
     callback pressed(x: float, y: float, additive: bool);
     callback grip-pressed(id: string, grip: int, x: float, y: float);
@@ -722,7 +730,7 @@ component StageOverlay inherits Rectangle {
             released => { root.released(); }
         }
         // Over the clip's own box, so a mask grip on its edge wins.
-        if entry.selected && entry.mask >= 0 && !root.painting: MaskItem {
+        if entry.selected && entry.mask >= 0 && !root.painting && !root.pen-active: MaskItem {
             x: 0;
             y: 0;
             width: parent.width;
@@ -731,6 +739,109 @@ component StageOverlay inherits Rectangle {
             grip-pressed(grip, x, y) => { root.grip-pressed(entry.id, grip, x, y); }
             dragged(x, y, snap) => { root.dragged(x, y, snap); }
             released => { root.released(); }
+        }
+    }
+
+    // ── the pen ──────────────────────────────────────────────────────────
+    //
+    // Last, over every box and grip, while a pen mask is drawn: a click
+    // lays a corner, a click on the first corner - once there are three -
+    // closes the shape, and the right button takes the last corner back.
+    // The line from the last corner to the pointer is drawn here, from the
+    // pointer this layer already has, without a trip to Rust.
+    if root.pen-active: pen := TouchArea {
+        x: 0;
+        y: 0;
+        width: root.width;
+        height: root.height;
+        mouse-cursor: MouseCursor.crosshair;
+
+        property <int> count: root.pen-points.length;
+        property <PenPointData> first: root.pen-points[0];
+        property <PenPointData> last: root.pen-points[Math.max(0, self.count - 1)];
+        /// The pointer is over the first corner, close enough to close.
+        property <bool> closing: self.count >= 3 && self.has-hover
+            && Math.abs(self.mouse-x - self.first.x * root.width) <= 9px
+            && Math.abs(self.mouse-y - self.first.y * root.height) <= 9px;
+
+        pointer-event(event) => {
+            if (event.kind != PointerEventKind.down) {
+                return;
+            }
+            if (event.button == PointerEventButton.right) {
+                root.pen-back();
+            } else if (event.button == PointerEventButton.left) {
+                if (self.closing) {
+                    root.pen-closed();
+                } else {
+                    root.pen-clicked(self.mouse-x / root.width, self.mouse-y / root.height);
+                }
+            }
+        }
+
+        // The corners laid so far, joined: a dark line under a light one,
+        // as the mask's outline is drawn.
+        for tone[index] in [Theme.stage, #ffffff]: Path {
+            x: 0;
+            y: 0;
+            width: root.width;
+            height: root.height;
+            viewbox-width: 1000;
+            viewbox-height: 1000;
+            fit: fill;
+            commands: root.pen-path;
+            stroke: tone;
+            stroke-width: index == 0 ? 3px : 1.25px;
+            visible: pen.count > 1;
+        }
+
+        // From the last corner to the pointer: the side the next click lays.
+        if pen.count > 0 && pen.has-hover: Path {
+            x: 0;
+            y: 0;
+            width: root.width;
+            height: root.height;
+            viewbox-width: 1000;
+            viewbox-height: 1000;
+            fit: fill;
+            commands: "M \{pen.last.x * 1000} \{pen.last.y * 1000} L \{pen.mouse-x / root.width * 1000} \{pen.mouse-y / root.height * 1000}";
+            stroke: Theme.accent;
+            stroke-width: 1.25px;
+        }
+
+        // The corners themselves; the first grows and takes the accent when
+        // a click there would close the shape.
+        for point[index] in root.pen-points: Rectangle {
+            property <length> size: index == 0 && pen.closing ? 14px : 8px;
+            x: point.x * root.width - self.size / 2;
+            y: point.y * root.height - self.size / 2;
+            width: self.size;
+            height: self.size;
+            border-radius: self.size / 2;
+            background: index == 0 && pen.closing ? Theme.accent : #ffffff;
+            border-width: 1px;
+            border-color: Theme.stage;
+        }
+
+        // What to do, along the top of the frame.
+        Rectangle {
+            x: (root.width - self.width) / 2;
+            y: 8px;
+            width: Math.min(root.width - 16px, hint.preferred-width + 20px);
+            height: hint.preferred-height + 10px;
+            border-radius: Theme.r;
+            background: #000000b0;
+
+            hint := Text {
+                x: 10px;
+                width: parent.width - 20px;
+                text: I18n.t("mask.penHint");
+                color: #ffffff;
+                font-size: Theme.fs-sm;
+                wrap: word-wrap;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
         }
     }
 }
@@ -769,6 +880,13 @@ export component PreviewPane inherits Rectangle {
     in property <float> stroke-width;
     in property <bool> stroke-erase;
     in property <bool> painting;
+    /// A pen mask being drawn; see the Editor global.
+    in property <bool> pen-active;
+    in property <[PenPointData]> pen-points;
+    in property <string> pen-path;
+    callback pen-clicked(x: float, y: float);
+    callback pen-closed();
+    callback pen-back();
     /// The snap lines while one of them is being moved.
     in property <[StageGuideData]> stage-guides;
 
@@ -1074,6 +1192,12 @@ export component PreviewPane inherits Rectangle {
                 stroke-width: root.stroke-width;
                 stroke-erase: root.stroke-erase;
                 painting: root.painting;
+                pen-active: root.pen-active;
+                pen-points: root.pen-points;
+                pen-path: root.pen-path;
+                pen-clicked(x, y) => { root.pen-clicked(x, y); }
+                pen-closed => { root.pen-closed(); }
+                pen-back => { root.pen-back(); }
                 pressed(x, y, additive) => { root.stage-pressed(x, y, additive); }
                 grip-pressed(id, grip, x, y) => { root.stage-grip-pressed(id, grip, x, y); }
                 dragged(x, y, snap) => { root.stage-dragged(x, y, snap); }

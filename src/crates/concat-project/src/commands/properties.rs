@@ -65,6 +65,9 @@ pub(super) fn apply(
             if let Some(mask) = patch.mask {
                 applied |= assign(&mut clip.mask, mask.map(ClipMask::tidy));
             }
+            if let Some(points) = patch.mask_points {
+                applied |= assign(&mut clip.mask_points, crate::model::tidy_pen(points));
+            }
             if let Some(filters) = patch.filters {
                 applied |= assign(&mut clip.filters, filters);
             }
@@ -425,5 +428,56 @@ fn make_room(timeline: &mut Timeline, clip_id: &str, old_end: f64, ripple: bool)
         }) {
             other.start = (other.start + moved).max(0.0);
         }
+    }
+}
+
+#[cfg(test)]
+mod pen_tests {
+    use super::*;
+    use crate::Editor;
+    use crate::model::MaskShape;
+
+    #[test]
+    fn a_drawing_lands_with_its_shape_as_one_step_and_is_tidied() {
+        let mut editor = Editor::new();
+        let clip = editor
+            .apply(Command::AddTextClip {
+                track_id: None,
+                above: false,
+                start: 0.0,
+                style: None,
+                duration: Some(2.0),
+                offset_y: None,
+            })
+            .expect("a title")
+            .created_id
+            .expect("an id");
+        editor
+            .apply(Command::UpdateClip {
+                clip_id: clip.clone(),
+                patch: ClipPatch {
+                    mask: Some(Some(ClipMask::of(MaskShape::Pen))),
+                    mask_points: Some(vec![[-0.5, -0.5], [0.9, -0.5], [0.5, 0.5]]),
+                    ..Default::default()
+                },
+            })
+            .expect("drawn");
+        let drawn = editor.project().active().clip(&clip).expect("clip").clone();
+        assert_eq!(drawn.mask.map(|mask| mask.shape), Some(MaskShape::Pen));
+        assert_eq!(
+            drawn.mask_points,
+            vec![[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5]]
+        );
+        editor.undo();
+        let undone = editor.project().active().clip(&clip).expect("clip").clone();
+        assert!(undone.mask.is_none() && undone.mask_points.is_empty());
+        let bad = editor.apply(Command::UpdateClip {
+            clip_id: clip,
+            patch: ClipPatch {
+                mask_points: Some(vec![[f64::NAN, 0.0]]),
+                ..Default::default()
+            },
+        });
+        assert!(bad.is_err(), "a corner that is not a number is refused");
     }
 }

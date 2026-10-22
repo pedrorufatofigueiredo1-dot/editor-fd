@@ -47,6 +47,7 @@ mod keymap;
 mod marker;
 mod marks;
 mod meters;
+mod pen;
 mod platform;
 /// What a phone's own crate installs before the window runs: the way to
 /// the system's file picker, and where a finished export is put so the
@@ -428,6 +429,7 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
         ramp.set_presets(ModelRc::from(models.speed_presets.clone()));
         editor.set_key_marks(ModelRc::from(models.key_marks.clone()));
         editor.set_markers(ModelRc::from(models.markers.clone()));
+        editor.set_pen_points(ModelRc::from(models.pen_points.clone()));
         app.global::<Library>()
             .set_views(ModelRc::from(models.library_views.clone()));
         editor.set_menu_items(ModelRc::from(models.menu.clone()));
@@ -1600,6 +1602,16 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
         state.menu_media = None;
         state.menu_floor = false;
         state.menu_marker = Some(marker::MarkerRef::new(&id, &clip));
+    }));
+    // The pen mask being drawn on the monitor; see pen.rs.
+    editor.on_pen_clicked(on_lanes!(|state, x: f32, y: f32| {
+        state.pen_clicked(x, y);
+    }));
+    editor.on_pen_back(on_lanes!(|state| {
+        state.pen_back();
+    }));
+    editor.on_pen_closed(on_window!(|state| {
+        state.pen_closed();
     }));
     editor.on_marker_add(on_window!(|state, target: SharedString| {
         state.add_marker(target.as_str());

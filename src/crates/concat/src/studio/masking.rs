@@ -303,6 +303,76 @@ impl MaskFrame {
     pub fn fraction(&self, at: (f64, f64)) -> (f32, f32) {
         ((at.0 / self.frame.0) as f32, (at.1 / self.frame.1) as f32)
     }
+
+    /// A pen mask's outline on the overlay: the polygon through `corners`,
+    /// each a fraction of the mask's box from its centre (see
+    /// `Clip::mask_points`), closed back to the first.
+    pub fn pen_outline(&self, corners: &[[f64; 2]]) -> String {
+        let box_w = self.mask.width * self.short;
+        let box_h = self.mask.height * self.short;
+        let mut out = String::new();
+        for (index, corner) in corners.iter().enumerate() {
+            let verb = if index == 0 { "M" } else { "L" };
+            let at = self.point((corner[0] * box_w, corner[1] * box_h));
+            out.push_str(&format!("{verb} {} ", self.path_point(at)));
+        }
+        if corners.len() > 2 {
+            out.push('Z');
+        }
+        out
+    }
+
+    /// A drawing made on the frame - `points` in frame pixels, in the
+    /// order they were clicked - as a pen mask on this picture: the mask's
+    /// box is the drawing's bounding box, unturned on the picture, and the
+    /// corners are fractions of that box. The mask's softness and invert
+    /// are kept from `self.mask`. `None` for fewer than three points.
+    pub fn pen_from(&self, points: &[(f64, f64)]) -> Option<(ClipMask, Vec<[f64; 2]>)> {
+        if points.len() < 3 {
+            return None;
+        }
+        // Each point on the picture as it is drawn, unturned, in its
+        // shorter side's units from its centre.
+        let (sin, cos) = self.picture_turn.sin_cos();
+        let local: Vec<(f64, f64)> = points
+            .iter()
+            .map(|&(x, y)| {
+                let (dx, dy) = (x - self.picture.0, y - self.picture.1);
+                (
+                    (dx * cos + dy * sin) / self.short,
+                    (-dx * sin + dy * cos) / self.short,
+                )
+            })
+            .collect();
+        let (mut left, mut right) = (f64::MAX, f64::MIN);
+        let (mut top, mut bottom) = (f64::MAX, f64::MIN);
+        for &(x, y) in &local {
+            left = left.min(x);
+            right = right.max(x);
+            top = top.min(y);
+            bottom = bottom.max(y);
+        }
+        let width = (right - left).max(ClipMask::MIN_SIZE);
+        let height = (bottom - top).max(ClipMask::MIN_SIZE);
+        let centre = ((left + right) / 2.0, (top + bottom) / 2.0);
+        let corners = local
+            .iter()
+            .map(|&(x, y)| [(x - centre.0) / width, (y - centre.1) / height])
+            .collect();
+        let mask = ClipMask {
+            shape: MaskShape::Pen,
+            // The centre in fractions of the picture's own width and
+            // height, as every mask's is.
+            x: centre.0 * self.short / self.size.0.max(1.0),
+            y: centre.1 * self.short / self.size.1.max(1.0),
+            width,
+            height,
+            rotation: 0.0,
+            roundness: 0.0,
+            ..self.mask
+        };
+        Some((mask.tidy(), corners))
+    }
 }
 
 #[cfg(test)]
@@ -382,6 +452,33 @@ mod tests {
         // Dragging it back up to the middle puts it back in the middle.
         let back = frame.dragged(MaskGrip::Move, (100.0, 100.0), (100.0, 50.0));
         assert!(back.x.abs() < 1e-9 && back.y.abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_drawing_becomes_a_pen_mask_in_its_bounding_box_and_back() {
+        // On the 200 by 100 picture: a triangle in the right half.
+        let frame = placed(ClipMask::of(MaskShape::Pen));
+        let (mask, corners) = frame
+            .pen_from(&[(120.0, 20.0), (180.0, 20.0), (150.0, 80.0)])
+            .expect("a shape");
+        // Its box is 60 by 60 pixels, 0.6 of the 100-pixel short side, and
+        // its centre 50 pixels right of the middle: a quarter of 200.
+        assert!((mask.width - 0.6).abs() < 1e-9 && (mask.height - 0.6).abs() < 1e-9);
+        assert!((mask.x - 0.25).abs() < 1e-9 && mask.y.abs() < 1e-9);
+        let expected = [[-0.5, -0.5], [0.5, -0.5], [0.0, 0.5]];
+        assert_eq!(corners.len(), 3);
+        for (got, want) in corners.iter().zip(expected) {
+            assert!(
+                (got[0] - want[0]).abs() < 1e-9 && (got[1] - want[1]).abs() < 1e-9,
+                "{got:?} is not {want:?}"
+            );
+        }
+        // Laid back on the frame, the outline goes through the clicks.
+        let laid = placed(mask);
+        let outline = laid.pen_outline(&corners);
+        assert!(outline.starts_with("M 600.00 200.00 L 900.00 200.00 L 750.00 800.00"));
+        assert!(outline.ends_with('Z'));
+        assert!(frame.pen_from(&[(0.0, 0.0), (1.0, 1.0)]).is_none());
     }
 
     #[test]

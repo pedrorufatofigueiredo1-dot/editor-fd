@@ -87,6 +87,13 @@ export struct StripData {
 /// Positions are in *seconds*, not pixels. Zoom and pan are then a property
 /// change on the lanes and not a republish of the model — panning a timeline
 /// would otherwise rewrite every row of it on every frame of the drag.
+/// One corner of a pen mask being drawn on the monitor, in fractions of the
+/// frame.
+export struct PenPointData {
+    x: float,
+    y: float,
+}
+
 /// A marker as the lanes draw it: a flag on the ruler, or one riding a
 /// clip, with what the edit sheet shows for it.
 export struct MarkerData {

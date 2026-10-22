@@ -138,6 +138,11 @@ pub struct ClipPatch {
     )]
     #[cfg_attr(feature = "schema", schemars(with = "Option<ClipMask>"))]
     pub mask: Option<Option<ClipMask>>,
+    /// A pen mask's corners, replaced wholesale; see `Clip::mask_points`.
+    /// Sent beside `mask` when a drawing is closed, so the shape and its
+    /// corners land as one step.
+    #[serde(default)]
+    pub mask_points: Option<Vec<[f64; 2]>>,
     /// Wholesale replacement of the audio filter chain - the UI sends the
     /// full list, not a diff.
     pub filters: Option<Vec<AppliedFilter>>,
@@ -1159,6 +1164,7 @@ impl Command {
                             mask.feather,
                         ])
                     })
+                    || patch.mask_points.iter().flatten().any(|point| bad(*point))
                     || patch.filters.as_deref().is_some_and(bad_chain)
                     || patch.video_effects.as_deref().is_some_and(bad_chain)
                     || patch

@@ -1134,7 +1134,8 @@ export component VideoPanel inherits VerticalLayout {
         I18n.t("mask.circle"),
         I18n.t("mask.rectangle"),
         I18n.t("mask.heart"),
-        I18n.t("mask.star")
+        I18n.t("mask.star"),
+        I18n.t("mask.pen")
     ];
 
     function seed() {
@@ -1711,6 +1712,15 @@ export component VideoPanel inherits VerticalLayout {
                     label: root.mask-names[5];
                     checked: root.mask == 5;
                     clicked => { root.set(ClipField.mask-shape, 5); root.commit(); }
+                }
+                // The pen: a shape drawn corner by corner on the monitor.
+                // Choosing it starts a drawing; the mask is the pen's once
+                // the drawing is closed. Chosen again, it draws anew.
+                ToolButton {
+                    glyph: Glyph.mask-pen;
+                    label: root.mask-names[6];
+                    checked: root.mask == 6;
+                    clicked => { root.set(ClipField.mask-shape, 6); root.commit(); }
                 }
             }
 

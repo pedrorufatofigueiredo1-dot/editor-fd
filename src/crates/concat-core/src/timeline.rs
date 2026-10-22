@@ -104,6 +104,10 @@ pub struct Clip {
     /// The shape that keeps part of the picture, when one does; its
     /// numbers ride the animation's mask tracks.
     pub mask: Option<ShapeMask>,
+    /// A pen mask's corners, in fractions of the mask's box: what a
+    /// [`crate::mask::MaskShape::Pen`] keeps. Shared, since every frame's
+    /// layer of the clip carries them to the executor.
+    pub pen: Option<std::sync::Arc<[[f32; 2]]>>,
 }
 
 /// How a layer's colour meets what is beneath it.
@@ -227,6 +231,7 @@ impl Clip {
             blend: Blend::Normal,
             hold: false,
             mask: None,
+            pen: None,
         }
     }
 
