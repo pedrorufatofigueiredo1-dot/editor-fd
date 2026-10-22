@@ -310,7 +310,10 @@ mod tests {
     fn the_sheet_swatches_are_the_models_colours() {
         let sheet = include_str!("../ui/dialogs/marker.slint");
         for color in MARKER_COLORS {
-            assert!(sheet.contains(color), "{color} is not a swatch on the sheet");
+            assert!(
+                sheet.contains(color),
+                "{color} is not a swatch on the sheet"
+            );
         }
     }
 }

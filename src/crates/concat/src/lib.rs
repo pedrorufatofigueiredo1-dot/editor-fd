@@ -38,8 +38,8 @@ mod format;
 mod gpu;
 mod grading;
 mod host;
-mod marker;
 mod i18n;
+mod marker;
 mod marks;
 mod meters;
 mod platform;
@@ -1298,7 +1298,10 @@ fn start(project: Option<std::path::PathBuf>, smoke: bool) -> Result<(), slint::
     editor.on_marker_edit(on_window!(|state, id: SharedString, clip: SharedString| {
         state.edit_marker(marker::MarkerRef::new(&id, &clip));
     }));
-    app.on_marker_saved(on_window!(|state, name: SharedString, note: SharedString, color: i32| {
+    app.on_marker_saved(on_window!(|state,
+                                    name: SharedString,
+                                    note: SharedString,
+                                    color: i32| {
         state.save_marker(&name, &note, color);
     }));
     app.on_marker_deleted(on_window!(|state| {

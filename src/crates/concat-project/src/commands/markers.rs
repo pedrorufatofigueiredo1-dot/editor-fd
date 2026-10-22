@@ -245,7 +245,10 @@ mod tests {
             .expect("changed");
         let marker = &editor.project().active().markers[0];
         assert_eq!((marker.at, marker.name.as_str()), (2.0, "a"));
-        assert_eq!((marker.color.as_str(), marker.note.as_str()), ("#34c759", "n"));
+        assert_eq!(
+            (marker.color.as_str(), marker.note.as_str()),
+            ("#34c759", "n")
+        );
         editor
             .apply(Command::RemoveMarker {
                 clip_id: None,
