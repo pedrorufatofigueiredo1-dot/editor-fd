@@ -477,6 +477,10 @@ component MaskItem inherits Rectangle {
     background: transparent;
 
     // A dark line under a light one, so the outline reads over any picture.
+    // The path is in thousandths of the frame each way, so it is stretched
+    // over the frame (`fit: fill`): a Path keeps its view box's aspect by
+    // default, which squeezed every outline on a wide frame to a square's
+    // width - a heart drawn half as wide as the heart that was kept.
     Path {
         x: 0;
         y: 0;
@@ -484,6 +488,7 @@ component MaskItem inherits Rectangle {
         height: root.height;
         viewbox-width: 1000;
         viewbox-height: 1000;
+        fit: fill;
         commands: root.item.mask-path;
         stroke: Theme.stage;
         stroke-width: 3px;
@@ -495,6 +500,7 @@ component MaskItem inherits Rectangle {
         height: root.height;
         viewbox-width: 1000;
         viewbox-height: 1000;
+        fit: fill;
         commands: root.item.mask-path;
         stroke: #ffffff;
         stroke-width: 1.25px;
@@ -692,6 +698,8 @@ component StageOverlay inherits Rectangle {
         height: root.height;
         viewbox-width: 1000;
         viewbox-height: 1000;
+        // Stretched over the frame, as the mask's outline is.
+        fit: fill;
         commands: root.stroke-path;
         stroke: root.stroke-erase ? #ff5a5a99 : Theme.accent.with-alpha(0.6);
         stroke-width: Math.max(2px, root.stroke-width * root.width);
