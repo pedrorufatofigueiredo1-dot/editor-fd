@@ -12998,7 +12998,7 @@ fn moved_any<'a>(moves: &[ClipMove], before: impl Fn(&str) -> Option<&'a Clip>) 
 }
 
 /// The clips a flattened edit makes audible, as playback takes them:
-/// through the exporter's own cut into pieces, so a curve or a reverse
+/// through the exporter's own view of each, so a curve or a reverse
 /// sounds in the window as it will in the file.
 pub(crate) fn audio_specs(clips: &[concat_export::ExportClip]) -> Vec<ClipSpec> {
     clips
@@ -13009,7 +13009,7 @@ pub(crate) fn audio_specs(clips: &[concat_export::ExportClip]) -> Vec<ClipSpec> 
                     || (clip.kind == concat_export::ClipKind::Video
                         && clip.has_audio.unwrap_or(true)))
         })
-        // Through the exporter's own cut into pieces, so a curve or a
+        // Through the exporter's own view of each clip, so a curve or a
         // reverse sounds in the window as it will in the file.
         .flat_map(concat_export::audio_pieces)
         .map(|piece| ClipSpec {
@@ -13032,6 +13032,7 @@ pub(crate) fn audio_specs(clips: &[concat_export::ExportClip]) -> Vec<ClipSpec> 
             fade_in: piece.fade_in,
             fade_out: piece.fade_out,
             speed: piece.speed,
+            retime: piece.retime,
             preserve_pitch: piece.preserve_pitch,
             chain: piece.filter_chain,
         })

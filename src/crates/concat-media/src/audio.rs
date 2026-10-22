@@ -14,6 +14,7 @@
 
 use std::path::Path;
 
+use concat_core::SpeedCurve;
 use concat_core::animate::Track;
 use concat_core::time::Rational;
 use ffmpeg_the_third as ffmpeg;
@@ -55,6 +56,11 @@ pub struct AudioClip {
     pub source_start: f64,
     /// Source seconds consumed per timeline second. One is normal.
     pub speed: f64,
+    /// Speed as it changes over the clip, superseding `speed` (which is
+    /// then the curve's mean). [`mix_to_file`] makes such a clip's sound
+    /// first, following the curve continuously - see `crate::curve` - and
+    /// mixes the result at speed one; [`mix_graph`] itself never sees one.
+    pub retime: Option<SpeedCurve>,
     /// True holds pitch while the rate changes; false is the tape effect.
     pub preserve_pitch: bool,
     /// Linear gain, one being unity. The whole clip's, unless
@@ -374,6 +380,69 @@ pub fn mix_to_file(clips: &[AudioClip], duration: f64, destination: &Path) -> Re
     for clip in clips {
         validate_chain(&clip.filter_chain)?;
     }
+    let curved = Curved::render(clips, destination)?;
+    mix_rendered(&curved.clips, duration, destination)
+}
+
+/// The clips of a mix with every curved one's sound made beside the
+/// destination and put in its place, at speed one; the files go when this
+/// does, however the mix ended.
+struct Curved {
+    clips: Vec<AudioClip>,
+    made: Vec<std::path::PathBuf>,
+}
+
+impl Curved {
+    fn render(clips: &[AudioClip], destination: &Path) -> Result<Curved> {
+        let mut curved = Curved {
+            clips: Vec::with_capacity(clips.len()),
+            made: Vec::new(),
+        };
+        let stem = destination
+            .file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        for (index, clip) in clips.iter().enumerate() {
+            let Some(curve) = &clip.retime else {
+                curved.clips.push(clip.clone());
+                continue;
+            };
+            let made = destination.with_file_name(format!(".{stem}.concat-curve-{index}.wav"));
+            curved.made.push(made.clone());
+            crate::curve::render(
+                &crate::curve::CurveSource {
+                    path: &clip.path,
+                    stream: clip.stream,
+                    source_start: clip.source_start,
+                    duration: clip.duration,
+                    curve,
+                    preserve_pitch: clip.preserve_pitch,
+                },
+                &made,
+            )?;
+            curved.clips.push(AudioClip {
+                path: made,
+                stream: None,
+                source_start: 0.0,
+                speed: 1.0,
+                retime: None,
+                ..clip.clone()
+            });
+        }
+        Ok(curved)
+    }
+}
+
+impl Drop for Curved {
+    fn drop(&mut self) {
+        for made in &self.made {
+            let _ = std::fs::remove_file(made);
+        }
+    }
+}
+
+/// [`mix_to_file`] once no clip has a curve left.
+fn mix_rendered(clips: &[AudioClip], duration: f64, destination: &Path) -> Result<()> {
     let missing = |name: &str| Error::Missing {
         what: "filter",
         name: name.to_owned(),
@@ -873,6 +942,7 @@ mod tests {
             duration: 2.0,
             source_start: 0.0,
             speed: 1.0,
+            retime: None,
             preserve_pitch: true,
             volume: 1.0,
             volume_curve: Track::default(),
@@ -1156,6 +1226,7 @@ mod tests {
             duration,
             source_start,
             speed: 1.0,
+            retime: None,
             preserve_pitch: true,
             volume: 1.0,
             volume_curve: Track::default(),

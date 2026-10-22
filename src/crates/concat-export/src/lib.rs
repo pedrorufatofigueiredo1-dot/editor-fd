@@ -34,7 +34,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use concat_core::SpeedCurve;
-use concat_core::animate::{Animation, Ease as AnimEase, Key as AnimKey, Track as AnimTrack};
+use concat_core::animate::{Animation, Track as AnimTrack};
 use concat_core::frame::{Frame, Signal};
 use concat_core::shader::{RevealMap, ShaderPass};
 use concat_core::time::{FrameRate, Rational};
@@ -1247,111 +1247,33 @@ fn volume_track(clip: &ExportClip) -> AnimTrack {
         .unwrap_or_default()
 }
 
-/// A gain track re-expressed against a piece covering `[x0, x1]` of the clip.
+/// The engine's view of one audible clip. A clip whose speed changes over
+/// it carries the curve itself, and the engine makes its sound following
+/// the curve continuously (see `concat_media::curve`); `speed` is then the
+/// curve's mean, for whatever needs one number. It once came as pieces of
+/// constant rate, a tenth of a second each, and the seams between them
+/// were heard: the sound of a ramp came out chopped.
 ///
-/// A piece has its own clock starting at zero, so a key three-quarters of
-/// the way through the clip is nowhere near three-quarters of the way
-/// through the piece that holds it. The ends are pinned to what the whole
-/// track is worth there, which is what carries a ramp that started in an
-/// earlier piece into this one.
-fn track_slice(track: &AnimTrack, x0: f64, x1: f64) -> AnimTrack {
-    if track.is_empty() {
-        return AnimTrack::default();
-    }
-    let span = x1 - x0;
-    if span <= 0.0 {
-        return AnimTrack::new(vec![AnimKey {
-            at: 0.0,
-            value: track.value_at(x0, 1.0),
-            ease: AnimEase::LINEAR,
-        }]);
-    }
-    let mut keys = vec![AnimKey {
-        at: 0.0,
-        value: track.value_at(x0, 1.0),
-        ease: AnimEase::LINEAR,
-    }];
-    keys.extend(
-        track
-            .keys()
-            .iter()
-            .filter(|key| key.at > x0 && key.at < x1)
-            .map(|key| AnimKey {
-                at: (key.at - x0) / span,
-                value: key.value,
-                ease: key.ease,
-            }),
-    );
-    // The ease of whichever segment this end falls inside, so a ramp that
-    // crosses the boundary keeps its shape rather than going linear at it.
-    let closing = track
-        .keys()
-        .iter()
-        .find(|key| key.at >= x1)
-        .map_or(AnimEase::LINEAR, |key| key.ease);
-    keys.push(AnimKey {
-        at: 1.0,
-        value: track.value_at(x1, 1.0),
-        ease: closing,
-    });
-    AnimTrack::new(keys)
-}
-
-/// The engine's view of one audible clip - or several, when its speed
-/// changes over it. Sound can only change tempo in steps, so a curve is cut
-/// into pieces of constant rate, each at the mean of its stretch of the
-/// curve and starting where the curve says the source had got to.
+/// A list, for the callers that gather every clip's sound into one: a clip
+/// is always one entry of it now.
 pub fn audio_pieces(clip: &ExportClip) -> Vec<AudioClip> {
-    let chain = clip.filter_chain.clone();
-    let track = volume_track(clip);
-    let Some(curve) = clip.retime() else {
-        return vec![AudioClip {
-            path: PathBuf::from(&clip.path),
-            stream: clip.audio_stream.map(|index| index as usize),
-            start: clip.start,
-            duration: clip.duration,
-            source_start: clip.source_start,
-            speed: audio::clamp_speed(clip.speed),
-            preserve_pitch: clip.preserve_pitch,
-            volume: clip.volume,
-            volume_curve: track,
-            fade_in: clip.fade_in,
-            fade_out: clip.fade_out,
-            filter_chain: chain,
-        }];
-    };
-    // Pieces a tenth of a second long, or eight at least: fine enough that
-    // a tempo step is not heard, coarse enough that the graph stays small.
-    let count = ((clip.duration / 0.1).ceil() as usize).clamp(8, 400);
-    curve
-        .pieces(count)
-        .into_iter()
-        .map(|(x0, x1, consumed, mean)| {
-            let piece_duration = (x1 - x0) * clip.duration;
-            let forward = consumed * clip.duration;
-            let source_start = clip.source_start + forward;
-            let piece_start = clip.start + x0 * clip.duration;
-            let piece_end = piece_start + piece_duration;
-            // The clip's fades, as they fall on this piece.
-            let fade_in = (clip.fade_in - x0 * clip.duration).clamp(0.0, piece_duration);
-            let fade_out_from = clip.start + clip.duration - clip.fade_out;
-            let fade_out = (piece_end - fade_out_from.max(piece_start)).clamp(0.0, piece_duration);
-            AudioClip {
-                path: PathBuf::from(&clip.path),
-                stream: clip.audio_stream.map(|index| index as usize),
-                start: piece_start,
-                duration: piece_duration,
-                source_start,
-                speed: audio::clamp_speed(mean),
-                preserve_pitch: clip.preserve_pitch,
-                volume: clip.volume,
-                volume_curve: track_slice(&track, x0, x1),
-                fade_in: if clip.fade_in > 0.0 { fade_in } else { 0.0 },
-                fade_out: if clip.fade_out > 0.0 { fade_out } else { 0.0 },
-                filter_chain: chain.clone(),
-            }
-        })
-        .collect()
+    let retime = clip.retime();
+    let speed = retime.as_ref().map_or(clip.speed, SpeedCurve::mean);
+    vec![AudioClip {
+        path: PathBuf::from(&clip.path),
+        stream: clip.audio_stream.map(|index| index as usize),
+        start: clip.start,
+        duration: clip.duration,
+        source_start: clip.source_start,
+        speed: audio::clamp_speed(speed),
+        retime,
+        preserve_pitch: clip.preserve_pitch,
+        volume: clip.volume,
+        volume_curve: volume_track(clip),
+        fade_in: clip.fade_in,
+        fade_out: clip.fade_out,
+        filter_chain: clip.filter_chain.clone(),
+    }]
 }
 
 /// The plan's layer for one clip at one instant, filled in: the picture
@@ -1408,8 +1330,8 @@ fn filled(
     filled
 }
 
-/// A mask's matte - a pen's on a picture, or a mask layer's over the frame
-/// - for a picture `width` by `height`, drawn once for each mask it is
+/// A mask's matte (a pen's on a picture, or a mask layer's over the
+/// frame) for a picture `width` by `height`, drawn once for each mask it is
 /// asked for: a mask that does not move is the same matte on every frame,
 /// and drawing one is a few hundred thousand distances. A handful are
 /// kept - one per mask on screen, and the ones a keyed mask has just

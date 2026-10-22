@@ -188,6 +188,7 @@ fn clock_aac(wav: &Path, path: &Path, seconds: u32) {
         duration: f64::from(seconds),
         source_start: 0.0,
         speed: 1.0,
+        retime: None,
         preserve_pitch: true,
         volume: 1.0,
         volume_curve: GainTrack::default(),

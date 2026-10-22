@@ -47,6 +47,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, mpsc};
 
+use concat_core::SpeedCurve;
 use concat_core::animate::{Ease, Key, Track};
 use serde::Deserialize;
 
@@ -117,6 +118,10 @@ pub struct ClipSpec {
     pub fade_out: f64,
     /// Playback speed; 1.0 is the source's own.
     pub speed: f64,
+    /// Speed as it changes over the clip, superseding `speed`; see
+    /// `concat_media::audio::AudioClip::retime`. Never from the window.
+    #[serde(skip)]
+    pub retime: Option<SpeedCurve>,
     /// Whether a speed change keeps the pitch.
     pub preserve_pitch: bool,
     /// FFmpeg audio filter chain, or empty.
@@ -795,6 +800,17 @@ fn decode_key(spec: &ClipSpec) -> String {
     eat(&spec.duration.to_bits().to_le_bytes());
     eat(&spec.speed.to_bits().to_le_bytes());
     eat(&[u8::from(spec.preserve_pitch)]);
+    // Only for a curve, so every constant-rate key stays what it was.
+    if let Some(curve) = &spec.retime {
+        eat(b"curve");
+        for &(x, speed) in curve.points() {
+            eat(&x.to_bits().to_le_bytes());
+            eat(&speed.to_bits().to_le_bytes());
+        }
+        for slope in curve.slopes().unwrap_or_default() {
+            eat(&slope.to_bits().to_le_bytes());
+        }
+    }
     eat(spec.chain.as_bytes());
     // Only when a stream is named, so every key from before streams were
     // named still finds its file.
@@ -816,8 +832,6 @@ fn decode_key(spec: &ClipSpec) -> String {
 /// what the preview mixes is what the export renders. A file already in the
 /// cache is reused as is - that is the point of the cache.
 fn decode(spec: &ClipSpec, project: &Path, key: &str) -> Result<Pcm, String> {
-    use concat_media::{AudioDecoder, AudioOptions, SampleFormat};
-
     concat_media::audio::validate_chain(&spec.chain).map_err(|error| error.to_string())?;
 
     let directory = project.join("cache").join("audio");
@@ -828,35 +842,89 @@ fn decode(spec: &ClipSpec, project: &Path, key: &str) -> Result<Pcm, String> {
     std::fs::create_dir_all(&directory)
         .map_err(|error| format!("could not create {}: {error}", directory.display()))?;
 
+    // A curve's sound is made by the engine first, following it
+    // continuously, exactly as the export mix makes it; what is decoded
+    // below is then that, at speed one, through the clip's own filters.
+    let curved = directory.join(format!("{key}.curve.wav"));
+    let made = match &spec.retime {
+        Some(curve) => {
+            concat_media::curve::render(
+                &concat_media::curve::CurveSource {
+                    path: Path::new(&spec.path),
+                    stream: spec.audio_stream.map(|index| index as usize),
+                    source_start: spec.source_start,
+                    duration: spec.duration,
+                    curve,
+                    preserve_pitch: spec.preserve_pitch,
+                },
+                &curved,
+            )
+            .map_err(|error| {
+                let _ = std::fs::remove_file(&curved);
+                error.to_string()
+            })?;
+            true
+        }
+        None => false,
+    };
+    let finished = decode_span(spec, if made { Some(&curved) } else { None }, &destination);
+    if made {
+        let _ = std::fs::remove_file(&curved);
+    }
+    finished?;
+    Pcm::open(&destination)
+}
+
+/// Decodes `spec`'s span - or all of `curved`, its curve's sound already
+/// made - through its speed and filters into the cache file `destination`.
+fn decode_span(spec: &ClipSpec, curved: Option<&Path>, destination: &Path) -> Result<(), String> {
+    use concat_media::{AudioDecoder, AudioOptions, SampleFormat};
+
     // Speed first, then the clip's own filters - the same order the export
     // graph applies, because these are one definition, not two. The engine
     // owns what speed *means*; this function only decodes.
-    let mut filters: Vec<String> =
-        concat_media::audio::speed_filters(spec.speed, spec.preserve_pitch);
+    let mut filters: Vec<String> = if curved.is_some() {
+        Vec::new()
+    } else {
+        concat_media::audio::speed_filters(spec.speed, spec.preserve_pitch)
+    };
     if !spec.chain.is_empty() {
         filters.push(spec.chain.clone());
     }
 
     // A sped-up clip reads further into the file than it occupies on the
     // timeline: the source window is `duration * speed`, exactly the window
-    // the exporter trims.
-    let window = spec.duration * concat_media::audio::clamp_speed(spec.speed);
+    // the exporter trims. A curve's sound is the clip's length already.
+    let (path, start, window) = match curved {
+        Some(curved) => (curved.to_path_buf(), 0.0, spec.duration),
+        None => (
+            PathBuf::from(&spec.path),
+            spec.source_start,
+            spec.duration * concat_media::audio::clamp_speed(spec.speed),
+        ),
+    };
+    let stream = match curved {
+        Some(_) => None,
+        None => spec.audio_stream.map(|index| index as usize),
+    };
 
     let mut decoder = AudioDecoder::open(
-        &spec.path,
+        &path,
         &AudioOptions {
-            start: Some(spec.source_start),
+            start: Some(start),
             duration: Some(window),
             filters,
             rate: PCM_RATE,
             channels: 2,
             format: SampleFormat::I16,
-            stream: spec.audio_stream.map(|index| index as usize),
+            stream,
         },
     )
     .map_err(|error| error.to_string())?;
 
-    let temporary = directory.join(format!("{key}.wav.decoding"));
+    let mut temporary = destination.as_os_str().to_owned();
+    temporary.push(".decoding");
+    let temporary = PathBuf::from(temporary);
     let result = (|| -> Result<(), String> {
         let mut file = std::io::BufWriter::new(
             std::fs::File::create(&temporary)
@@ -873,9 +941,8 @@ fn decode(spec: &ClipSpec, project: &Path, key: &str) -> Result<Pcm, String> {
         return Err(error);
     }
 
-    std::fs::rename(&temporary, &destination)
-        .map_err(|error| format!("could not commit {}: {error}", destination.display()))?;
-    Pcm::open(&destination)
+    std::fs::rename(&temporary, destination)
+        .map_err(|error| format!("could not commit {}: {error}", destination.display()))
 }
 
 /// Writes the RIFF/WAVE framing around 16-bit stereo samples at
