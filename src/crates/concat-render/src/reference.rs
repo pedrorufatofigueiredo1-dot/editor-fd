@@ -48,11 +48,56 @@ impl Compositor for CpuCompositor {
         // besides its effects, which are the GPU's alone and are held to
         // their packages' probes instead.
         let mut ground = Frame::black(plan.width, plan.height);
-        let next = 0;
-        for layer in &plan.layers[next..] {
+        // A mask layer's cut is arithmetic, and is drawn here: before the
+        // first layer at or above its lane, the stack beneath is kept by
+        // its matte, black elsewhere. Its effects, like every treatment's,
+        // are the GPU's.
+        let mut cuts: Vec<&PlannedTreatment> = plan
+            .treatments
+            .iter()
+            .filter(|cut| cut.matte.is_some() && cut.strength > 0.0)
+            .collect();
+        cuts.sort_by_key(|cut| cut.track);
+        let mut cuts = cuts.into_iter().peekable();
+        for layer in &plan.layers {
+            while let Some(cut) = cuts.next_if(|cut| cut.track <= layer.track) {
+                cut_to_matte(&mut ground, cut);
+            }
             draw(&mut ground, plan, layer);
         }
+        for cut in cuts {
+            cut_to_matte(&mut ground, cut);
+        }
         ground
+    }
+}
+
+/// The stack drawn so far kept by a mask layer's matte, sampled across the
+/// frame: what the matte keeps stays, the rest goes towards black by the
+/// layer's strength.
+fn cut_to_matte(ground: &mut Frame, cut: &PlannedTreatment) {
+    let Some(matte) = cut.matte.as_deref() else {
+        return;
+    };
+    let (width, height) = (ground.width(), ground.height());
+    let (mw, mh) = (matte.width().max(1), matte.height().max(1));
+    let strength = cut.strength.clamp(0.0, 1.0);
+    for y in 0..height {
+        let my = (((y as f32 + 0.5) / height as f32 * mh as f32) as u32).min(mh - 1);
+        for x in 0..width {
+            let mx = (((x as f32 + 0.5) / width as f32 * mw as f32) as u32).min(mw - 1);
+            let kept = matte
+                .pixel(mx, my)
+                .map_or(1.0, |rgba| f32::from(rgba[3]) / 255.0);
+            let keep = 1.0 - strength * (1.0 - kept);
+            if keep >= 1.0 {
+                continue;
+            }
+            if let Some([r, g, b, a]) = ground.pixel(x, y) {
+                let dim = |channel: u8| (f32::from(channel) * keep).round() as u8;
+                ground.set_pixel(x, y, [dim(r), dim(g), dim(b), a]);
+            }
+        }
     }
 }
 
@@ -665,6 +710,37 @@ mod tests {
         let frame = render(4, 4, vec![wiped]);
         assert_eq!(frame.pixel(0, 0), Some([0, 0, 0, 255]));
         assert_eq!(frame.pixel(3, 0), Some([255, 0, 0, 255]));
+    }
+
+    /// A mask layer on the CPU as on the GPU: the left half of a red
+    /// ground kept, the right half black, and a blue layer above it whole.
+    #[test]
+    fn a_mask_layer_cuts_the_stack_beneath_it() {
+        let ground = layer(solid(8, 8, [255, 0, 0, 255]));
+        let mut blue = layer(solid(8, 8, [0, 0, 255, 255]));
+        blue.track = 2;
+        blue.opacity = 1.0;
+        let mut matte = Frame::transparent(8, 8);
+        for y in 0..8 {
+            for x in 0..4 {
+                matte.set_pixel(x, y, [255, 255, 255, 255]);
+            }
+        }
+        let cut = |layers: Vec<PlannedLayer>| {
+            let mut frame_plan = plan(8, 8, layers);
+            frame_plan.treatments = vec![PlannedTreatment {
+                track: 1,
+                effects: Vec::new(),
+                strength: 1.0,
+                matte: Some(std::sync::Arc::new(matte.clone())),
+            }];
+            CpuCompositor.render(&frame_plan)
+        };
+        let out = cut(vec![ground.clone()]);
+        assert_eq!(out.pixel(1, 4), Some([255, 0, 0, 255]), "kept");
+        assert_eq!(out.pixel(6, 4), Some([0, 0, 0, 255]), "cut");
+        let out = cut(vec![ground, blue]);
+        assert_eq!(out.pixel(6, 4), Some([0, 0, 255, 255]), "above the layer");
     }
 
     /// A treatment on track 1 runs over what track 0 drew and not over
