@@ -54,7 +54,11 @@ pub struct Progress {
     pub frame: i64,
     /// Frames in total.
     pub total: i64,
-    /// What the exporter is doing: "video", "audio", "mux".
+    /// What the exporter is doing: "rendering", "mixing audio", "muxing";
+    /// "rendering in software" ([`concat_export::RENDERING_IN_SOFTWARE`])
+    /// when the hardware encoder stopped part way and the video is being
+    /// rendered again from its first frame on the CPU, the frame count
+    /// back at nothing.
     pub stage: &'static str,
 }
 
@@ -79,6 +83,7 @@ pub fn request(session: &Session, spec: &ExportSpec, titles: Vec<ExportClip>) ->
         color_space: session.video().color_space,
         hdr: spec.hdr,
         effect_time_offset: 0.0,
+        canvas: session.video().canvas,
         clips,
     }
 }

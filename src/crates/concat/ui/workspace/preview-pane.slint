@@ -856,6 +856,11 @@ export component PreviewPane inherits Rectangle {
     in property <int> ratio-index;
     in property <int> quality-index;
 
+    /// A library look is shown over the picture without being laid down.
+    in property <bool> previewing;
+    /// Its cross was pressed.
+    callback preview-ended();
+
     // ── where the playhead is ────────────────────────────────────────────
     in property <float> playhead;
     in property <float> duration;
@@ -874,6 +879,8 @@ export component PreviewPane inherits Rectangle {
     callback source-closed();
     /// The decoded frame. Drawn fitted to the stage when there is one.
     in property <image> frame;
+    /// The frame lets something show through; see `Editor.see-through`.
+    in property <bool> see-through;
     /// Every picture under the playhead, for the selection drawn over the
     /// frame. See StageOverlay.
     in property <[StageItemData]> stage-items;
@@ -933,9 +940,10 @@ export component PreviewPane inherits Rectangle {
     /// the button the transport carries.
     public function fit-view() { viewport.fit(); }
 
-    property <[int]> ratios-w: [1920, 3840, 1080, 1080, 1440, 2560];
-    property <[int]> ratios-h: [1080, 2160, 1920, 1080, 1080, 1080];
-    property <[string]> ratio-names: ["16:9", "16:9 4K", "9:16", "1:1", "4:3", "21:9"];
+    // `OUTPUTS` in studio.rs, row for row.
+    property <[int]> ratios-w: [1920, 3840, 1080, 1080, 1080, 1080, 1440, 2560];
+    property <[int]> ratios-h: [1080, 2160, 1920, 1080, 1350, 1440, 1080, 1080];
+    property <[string]> ratio-names: ["16:9", "16:9 4K", "9:16", "1:1", "4:5", "3:4", "4:3", "21:9"];
 
     property <float> aspect: root.output-height > 0
         ? root.output-width / root.output-height : 16 / 9;
@@ -1167,6 +1175,18 @@ export component PreviewPane inherits Rectangle {
                     }
                 }
 
+                // Under a see-through frame, the checker every editor draws
+                // where nothing covers it: one tile, repeated.
+                if root.see-through && root.has-picture: Image {
+                    x: 0;
+                    y: 0;
+                    width: parent.width;
+                    height: parent.height;
+                    source: @image-url("../assets/checker.png");
+                    horizontal-tiling: repeat;
+                    vertical-tiling: repeat;
+                }
+
                 // The engine's frame, when one has arrived. It is already
                 // the stage's shape, so `contain` only absorbs a rounding
                 // pixel either way.
@@ -1212,6 +1232,62 @@ export component PreviewPane inherits Rectangle {
                     frame-menu.request-x = self.absolute-position.x - root.absolute-position.x + x;
                     frame-menu.request-y = self.absolute-position.y - root.absolute-position.y + y;
                     root.frame-token += 1;
+                }
+            }
+
+            // A look shown over the picture from the library, not laid down:
+            // said on the monitor for as long as it is up, with a cross to
+            // take it off - else it read as a filter put on the clip.
+            if root.previewing && root.source-name == "": Rectangle {
+                x: stage.x + (stage.width - self.width) / 2;
+                y: stage.y + 8px;
+                width: look-row.preferred-width;
+                height: 24px;
+                border-radius: 12px;
+                background: Theme.scrim;
+
+                look-row := HorizontalLayout {
+                    padding-left: 10px;
+                    padding-right: 4px;
+                    spacing: 6px;
+
+                    VerticalLayout {
+                        alignment: center;
+                        Icon {
+                            glyph: Glyph.eye;
+                            size: 12px;
+                            tint: Theme.on-scrim;
+                        }
+                    }
+                    Text {
+                        text: I18n.t("previewPane.lookPreview");
+                        color: Theme.on-scrim;
+                        font-size: Theme.fs-sm;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        max-width: stage.width - 80px;
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        Rectangle {
+                            width: 18px;
+                            height: 18px;
+                            border-radius: 9px;
+                            background: end-touch.has-hover ? Theme.on-scrim.with-alpha(0.2) : transparent;
+
+                            Icon {
+                                x: (parent.width - self.width) / 2;
+                                y: (parent.height - self.height) / 2;
+                                glyph: Glyph.close;
+                                size: 10px;
+                                tint: Theme.on-scrim;
+                            }
+                            end-touch := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.preview-ended(); }
+                            }
+                        }
+                    }
                 }
             }
 

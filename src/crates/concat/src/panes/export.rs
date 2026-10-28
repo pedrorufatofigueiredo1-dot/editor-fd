@@ -138,6 +138,7 @@ impl ExportPane {
                 // and its own rate, first on the rate list.
                 self.resolution = Self::own_rung(studio);
                 self.rate = 0;
+                self.follow_canvas(studio);
             }
             ExportMsg::Close => self.open = false,
             ExportMsg::NameEdited(name) => self.name = name,
@@ -195,6 +196,12 @@ impl ExportPane {
             }
             ExportMsg::Progress { fraction, stage } => {
                 if self.phase == ExportPhase::Running {
+                    // Gone back: the export started again from its first
+                    // frame on the slower encoder, and the time left is
+                    // reckoned from there.
+                    if fraction < self.progress {
+                        self.started_at = Some(std::time::Instant::now());
+                    }
                     self.progress = fraction.clamp(0.0, 1.0);
                     self.stage = stage;
                 }
@@ -360,6 +367,30 @@ impl ExportPane {
         (video + AUDIO_BPS) * studio.duration().max(1.0) / 8.0
     }
 
+    /// The codec a sheet opens on follows the canvas (#456): a timeline
+    /// that lets something show through opens on ProRes 4444, which every
+    /// editor takes with its alpha (VP9 where ProRes cannot be written),
+    /// and an opaque one leaves an alpha codec picked for an overlay
+    /// before for H.264, rather than writing it hundreds of megabits it
+    /// has no use for. Within the sheet the pick is the person's.
+    fn follow_canvas(&mut self, studio: &Studio) {
+        use concat_media::VideoCodec;
+        let chosen = VideoCodec::ALL[self.codec.min(VideoCodec::ALL.len() - 1)];
+        let see_through = studio.timeline().video.canvas[3] < 255;
+        let wanted = if see_through && !chosen.keeps_alpha() {
+            [VideoCodec::ProRes4444, VideoCodec::Vp9Alpha]
+                .into_iter()
+                .find(|codec| codec.encodable())
+        } else if !see_through && chosen.keeps_alpha() {
+            Some(VideoCodec::H264)
+        } else {
+            None
+        };
+        if let Some(index) = wanted.and_then(|codec| VideoCodec::ALL.iter().position(|c| *c == codec)) {
+            self.codec = index;
+        }
+    }
+
     /// The codec the sheet has chosen - HEVC for an HDR file where H.264
     /// was, since H.264 does not carry HDR.
     pub fn codec(&self, studio: &Studio) -> concat_media::VideoCodec {
@@ -383,7 +414,10 @@ impl ExportPane {
             concat_media::VideoCodec::H264 => concat_media::VideoCodec::Hevc,
             codec => codec,
         };
-        studio.timeline().video.color_space.is_hdr()
+        // An overlay that keeps its alpha is written SDR: the export
+        // tone-maps an HDR timeline for it.
+        !chosen.keeps_alpha()
+            && studio.timeline().video.color_space.is_hdr()
             && !self.sdr
             && deep.ten_bit_available()
             && deep.encodable()
@@ -420,7 +454,11 @@ impl ExportPane {
             self.message = t("export.nameNeedsToBeAFileName");
             return;
         };
-        let output = format!("{}/{name}.mp4", self.folder.trim_end_matches('/'));
+        let output = format!(
+            "{}/{name}.{}",
+            self.folder.trim_end_matches('/'),
+            self.codec(studio).container()
+        );
         // A file already there is replaced once the person has said so:
         // the confirmation sheet asks, and its answer comes back as
         // `Overwrite`. Nothing is written until then; the engine renders
@@ -471,6 +509,17 @@ impl ExportPane {
         request.rate_den = den;
 
         studio.pause();
+        // The monitor's readers that sit idle are closed now rather than
+        // ten seconds on by the sweep: on a phone up to three of them hold
+        // MediaCodec decoder sessions, which the chip has few of and its
+        // encoder and the export's own decoders need. A reader comes back
+        // on the next frame the monitor asks of it; the cached frames stay.
+        let closed = concat_host::scheduler()
+            .pool()
+            .close_idle(std::time::Duration::ZERO);
+        if closed > 0 {
+            log::info!("export: closed {closed} idle preview decoder(s) before starting");
+        }
         self.phase = ExportPhase::Running;
         self.progress = 0.0;
         self.stage = t("export.renderingVideo");
@@ -498,6 +547,7 @@ impl ExportPane {
                     };
                     let stage = match progress.stage {
                         "rendering" => t("export.renderingVideo"),
+                        concat_export::RENDERING_IN_SOFTWARE => t("export.renderingInSoftware"),
                         "mixing audio" => t("export.mixingAudio"),
                         "muxing" => t("export.finalisingFile"),
                         other => other.to_owned(),
@@ -523,6 +573,7 @@ impl ExportPane {
             .iter()
             .filter(|clip| clip.kind == concat_project::model::ClipKind::Text)
             .count();
+        let container = self.codec(studio).container();
         ExportData {
             open: self.open,
             name: self.name.as_str().into(),
@@ -530,9 +581,9 @@ impl ExportPane {
             // shows, not the app's own that the export writes into.
             // The name as it will be written: trimmed, as `begin` trims it.
             path: match platform::published_folder() {
-                Some(folder) => format!("{folder}/{}.mp4", self.name.trim()),
+                Some(folder) => format!("{folder}/{}.{container}", self.name.trim()),
                 None => format!(
-                    "{}/{}.mp4",
+                    "{}/{}.{container}",
                     self.folder.trim_end_matches('/'),
                     self.name.trim()
                 ),
@@ -544,9 +595,9 @@ impl ExportPane {
                 format!("{}:{:02}", whole / 60, whole % 60).into()
             },
             contents: if titles > 0 {
-                format!("{clips} clips · {titles} titles")
+                tf("export.contentsClipsTitles", &[&clips, &titles])
             } else {
-                format!("{clips} clips")
+                tf("export.contentsClips", &[&clips])
             }
             .into(),
             resolution: self.resolution as i32,
@@ -581,6 +632,11 @@ impl ExportPane {
             h264_encodable: concat_media::VideoCodec::H264.encodable(),
             hevc_encodable: concat_media::VideoCodec::Hevc.encodable(),
             av1_encodable: concat_media::VideoCodec::Av1.encodable(),
+            prores_encodable: concat_media::VideoCodec::ProRes4444.encodable(),
+            vp9_alpha_encodable: concat_media::VideoCodec::Vp9Alpha.encodable(),
+            see_through: studio.timeline().video.canvas[3] < 255,
+            keeps_alpha: self.codec(studio).keeps_alpha(),
+            rate_controlled: self.codec(studio).rate_controlled(),
             ten_bit: self.ten_bit,
             hdr_timeline: studio.timeline().video.color_space.is_hdr(),
             hdr: self.hdr(studio),

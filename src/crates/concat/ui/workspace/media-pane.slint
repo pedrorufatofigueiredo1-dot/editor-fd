@@ -75,6 +75,10 @@ export struct MediaItemData {
     /// a file should look like itself wherever it is drawn.
     wave: string,
     selected: bool,
+    /// Where the file is in the order of the selection, from 1, or 0 when
+    /// it is not selected: the number a phone's pick wears, and the order
+    /// Add lays the picks down in.
+    pick: int,
 }
 
 // ── the page strip ───────────────────────────────────────────────────────────
@@ -948,7 +952,7 @@ component CatalogueCard inherits Rectangle {
 
             tile := Rectangle {
                 y: 0;
-                height: root.compact ? root.height : root.width * 9 / 16;
+                height: root.compact ? root.height : root.width;
                 border-radius: Theme.r;
                 background: root.compact && card.has-hover && root.item.enabled
                     ? Theme.field : Theme.well;
@@ -1072,83 +1076,6 @@ component CatalogueCard inherits Rectangle {
                 width: root.width;
                 height: 14px;
                 text: root.item.label;
-                color: Theme.fg-muted;
-                font-size: Theme.fs-sm;
-                vertical-alignment: center;
-                overflow: elide;
-            }
-        }
-    }
-}
-
-// The text page: the one title style that exists, as a card. Clicking adds a
-// title at the playhead. Sized like one grid cell so the card matches its
-// neighbours on the other pages.
-component TextPage inherits Rectangle {
-    callback add-text();
-
-    opacity: drag.dragging ? 0.45 : 1.0;
-
-    property <length> gap: 8px;
-    property <length> min-card: 88px;
-    property <int> cols: Math.max(1,
-        Math.floor((root.width + root.gap) / (root.min-card + root.gap)));
-    property <length> card-w: (root.width - (root.cols - 1) * root.gap) / root.cols;
-
-    height: root.card-w * 9 / 16 + 4px + 14px;
-
-    // Pinned to the card and not to the page: a DragArea left to expand would
-    // start a drag from the empty half of the row beside the one card.
-    drag := DragArea {
-        x: 0;
-        y: 0;
-        width: root.card-w;
-        height: root.height;
-        // The one title style there is, so the payload names no preset — only
-        // what the drop should build, and what to call it.
-        data: Payload.of("text:default:Title");
-        drag-image: Payload.preview("text:default:Title");
-        drag-image-offset-x: -8;
-        drag-image-offset-y: -4;
-        allow-copy: true;
-
-        touch := TouchArea {
-            x: 0;
-            y: 0;
-            width: root.card-w;
-            height: root.height;
-            mouse-cursor: pointer;
-            clicked => { root.add-text(); }
-            double-clicked => { root.add-text(); }
-
-            tile := Rectangle {
-                y: 0;
-                height: root.card-w * 9 / 16;
-                border-radius: Theme.r;
-                // Titles wear the rose the timeline gives them.
-                background: Theme.kind-text-well;
-                border-width: 1px;
-                border-color: touch.has-hover ? Theme.line-strong : Theme.line;
-
-                Text {
-                    x: (parent.width - self.width) / 2;
-                    y: (parent.height - self.height) / 2;
-                    text: "Aa";
-                    color: Theme.kind-text;
-                    // A mark drawn as type rather than a line of text, so it
-                    // is sized to the tile it sits in like the kind glyphs on
-                    // every other card are.
-                    font-size: 20px;
-                    font-weight: Theme.weight-display;
-                }
-            }
-
-            Text {
-                x: 0;
-                y: tile.height + 4px;
-                width: root.card-w;
-                height: 14px;
-                text: I18n.t("mediaPane.defaultTitle");
                 color: Theme.fg-muted;
                 font-size: Theme.fs-sm;
                 vertical-alignment: center;
@@ -1284,7 +1211,7 @@ export component ShelfGrid inherits Rectangle {
         Math.floor((root.width + root.gap) / (root.min-card + root.gap)));
     property <length> card-w: (root.width - (root.cols - 1) * root.gap) / root.cols;
     property <length> card-h: root.compact ? root.card-w / 2
-        : root.card-w * 9 / 16 + 4px + 14px;
+        : root.card-w + 4px + 14px;
     property <int> rows: Math.ceil(root.entries.length / root.cols);
 
     height: root.rows > 0 ? root.rows * (root.card-h + root.gap) - root.gap : 0px;
@@ -1329,7 +1256,7 @@ component AdjustmentShelf inherits Rectangle {
         Math.floor((root.width + root.gap) / (root.min-card + root.gap)));
     property <length> card-w: (root.width - (root.cols - 1) * root.gap) / root.cols;
 
-    height: root.card-w * 9 / 16 + 4px + 14px;
+    height: root.card-w + 4px + 14px;
 
     CatalogueCard {
         x: 0;
@@ -1908,7 +1835,7 @@ export component MediaPane inherits Rectangle {
     property <bool> categories-open: true;
     property <bool> generated-open: true;
     property <bool> text-open: true;
-    /// 0 = Titles, 1 = Styles, 2 = Languages
+    /// 0 = Styles, 1 = Languages
     property <int> text-category;
     property <bool> stickers-open: true;
     property <bool> transitions-open: true;
@@ -2290,22 +2217,16 @@ export component MediaPane inherits Rectangle {
                         }
                         if root.text-open: CategoryRow {
                             height: 24px;
-                            label: I18n.t("mediaPane.titles");
+                            label: I18n.t("mediaPane.styles");
                             current: root.text-category == 0;
                             clicked => { root.text-category = 0; }
-                        }
-                        if root.text-open: CategoryRow {
-                            height: 24px;
-                            label: I18n.t("mediaPane.styles");
-                            current: root.text-category == 1;
-                            clicked => { root.text-category = 1; }
                         }
                         // Beside Styles: the looks for other writing.
                         if root.text-open: CategoryRow {
                             height: 24px;
                             label: I18n.t("mediaPane.languages");
-                            current: root.text-category == 2;
-                            clicked => { root.text-category = 2; }
+                            current: root.text-category == 1;
+                            clicked => { root.text-category = 1; }
                         }
                     }
 
@@ -2337,6 +2258,13 @@ export component MediaPane inherits Rectangle {
                         }
                         if root.transitions-open: VerticalLayout {
                             spacing: 1px;
+                            // Every shelf at once, first and the default.
+                            CategoryRow {
+                                height: 24px;
+                                label: I18n.t("common.all");
+                                current: Library.view(3).group == -1;
+                                clicked => { Library.group-changed(3, -1); }
+                            }
                             for label[index] in root.transition-groups: CategoryRow {
                                 height: 24px;
                                 label: label;
@@ -2358,6 +2286,16 @@ export component MediaPane inherits Rectangle {
                         }
                         if root.effects-open: VerticalLayout {
                             spacing: 1px;
+                            // Every shelf at once, first and the default.
+                            CategoryRow {
+                                height: 24px;
+                                label: I18n.t("common.all");
+                                current: !root.audio-shelf && Library.view(1).group == -1;
+                                clicked => { 
+                                    root.audio-shelf = false;
+                                    Library.group-changed(1, -1);
+                                 }
+                            }
                             for label[index] in root.effect-groups: CategoryRow {
                                 height: 24px;
                                 label: label;
@@ -2376,6 +2314,16 @@ export component MediaPane inherits Rectangle {
                         }
                         if root.audio-open: VerticalLayout {
                             spacing: 1px;
+                            // Every shelf at once, first and the default.
+                            CategoryRow {
+                                height: 24px;
+                                label: I18n.t("common.all");
+                                current: root.audio-shelf && Library.view(2).group == -1;
+                                clicked => { 
+                                    root.audio-shelf = true;
+                                    Library.group-changed(2, -1);
+                                 }
+                            }
                             for label[index] in root.audio-groups: CategoryRow {
                                 height: 24px;
                                 label: label;
@@ -2401,6 +2349,13 @@ export component MediaPane inherits Rectangle {
                         }
                         if root.filters-open: VerticalLayout {
                             spacing: 1px;
+                            // Every shelf at once, first and the default.
+                            CategoryRow {
+                                height: 24px;
+                                label: I18n.t("common.all");
+                                current: Library.view(0).group == -1;
+                                clicked => { Library.group-changed(0, -1); }
+                            }
                             for label[index] in root.filter-groups: CategoryRow {
                                 height: 24px;
                                 label: label;
@@ -2630,6 +2585,17 @@ export component MediaPane inherits Rectangle {
                     }
                     VoiceList {
                         styles: root.audio-category == 11;
+
+                        // A recording of the user's own kept as a voice,
+                        // brought in as Mine brings in a sound.
+                        if root.audio-category == 10: VerticalLayout {
+                            padding-top: 4px;
+                            padding-bottom: 6px;
+                            ImportButton {
+                                label: I18n.t("voices.importVoice");
+                                clicked => { Sounds.voice-import(); }
+                            }
+                        }
                     }
                 }
 
@@ -2638,24 +2604,15 @@ export component MediaPane inherits Rectangle {
                     text: I18n.t("sounds.noSoundsYet");
                 }
 
-                if root.tab == 1 && root.text-category == 0: HorizontalLayout {
-                    padding: 8px;
-
-                    TextPage {
-                        horizontal-stretch: 1;
-                        add-text => { root.add-text("default"); }
-                    }
-                }
-
                 // The looks. Each card is a title in that look, placed at
                 // the playhead on a click or dragged onto a lane; a preset
                 // that brings a font installs it on the way.
-                if root.tab == 1 && root.text-category >= 1: HorizontalLayout {
+                if root.tab == 1: HorizontalLayout {
                     padding: 8px;
 
                     PresetGrid {
                         horizontal-stretch: 1;
-                        items: root.text-category == 2 ? root.language-presets : root.presets;
+                        items: root.text-category == 1 ? root.language-presets : root.presets;
                         applied(id) => { root.add-text(id); }
                     }
                 }
@@ -2715,8 +2672,11 @@ export component MediaPane inherits Rectangle {
                         // the clip it is let go over, as on Filmora; on empty
                         // ground it is a layer of its own, as a filter is,
                         // treating every track beneath it - one effect over
-                        // the whole cut without putting it on each clip.
-                        payload-kind: root.audio-shelf ? "" : "effect";
+                        // the whole cut without putting it on each clip. A
+                        // sound effect dragged onto the lanes is a sound
+                        // layer: it treats everything heard under it for as
+                        // long as it runs.
+                        payload-kind: root.audio-shelf ? "audio-filter" : "effect";
                         applied(id, label) => {
                             if (root.audio-shelf) {
                                 root.apply-audio(id);

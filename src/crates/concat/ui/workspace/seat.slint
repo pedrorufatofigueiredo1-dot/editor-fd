@@ -164,6 +164,8 @@ export component Seat inherits Rectangle {
             pane-removable: Editor.seats.length > 1;
             pane-removed => { root.removed(); }
 
+            previewing: Editor.library-audition != "";
+            preview-ended => { Editor.library-audition-filter(Editor.library-audition); }
             output-width: Editor.output-width;
             output-height: Editor.output-height;
             frame-rate: Editor.frame-rate;
@@ -179,6 +181,7 @@ export component Seat inherits Rectangle {
             has-picture: Editor.has-picture;
             clip-name: Editor.preview-clip-name;
             frame: Editor.preview-frame;
+            see-through: Editor.see-through && !SourcePreview.open;
             stage-items: SourcePreview.open ? [] : Editor.stage-items;
             stage-guides: Editor.stage-guides;
             stroke-path: Editor.stroke-path;
@@ -305,6 +308,9 @@ export component Seat inherits Rectangle {
             transition-choices: Editor.transition-choices;
             clip-set(field, value) => { Editor.clip-set(field, value); }
             clip-set-text(field, value) => { Editor.clip-set-text(field, value); }
+            clip-set-words(text, caret) => { Editor.clip-set-words(text, caret); }
+            clip-select-words(anchor, cursor) => { Editor.clip-select-words(anchor, cursor); }
+            clip-reset-words => { Editor.clip-reset-words(); }
             clip-set-colour(field, value) => { Editor.clip-set-colour(field, value); }
             clip-commit => { Editor.clip-commit(); }
             font-families: Editor.font-families;
@@ -383,6 +389,7 @@ export component Seat inherits Rectangle {
             tool: Editor.tool;
             snap: Editor.snap;
             magnetic: Editor.magnetic;
+            linkage: Editor.linkage;
             pan-mode: Editor.pan-mode;
             trim-follow: Editor.trim-follow;
             meters-shown: Editor.meters-shown;
@@ -415,6 +422,7 @@ export component Seat inherits Rectangle {
             tool-changed(tool) => { Editor.tool-changed(tool); }
             snap-changed(snap) => { Editor.snap-changed(snap); }
             magnetic-changed(on) => { Editor.magnetic-changed(on); }
+            linkage-changed(on) => { Editor.linkage-changed(on); }
             pan-changed(on) => { Editor.pan-changed(on); }
             trim-follow-changed(on) => { Editor.trim-follow-changed(on); }
             meters-shown-changed(on) => { Editor.meters-shown-changed(on); }

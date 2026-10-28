@@ -685,15 +685,11 @@ mod tests {
         }
         let _ = std::fs::remove_file(&source);
         let _ = std::fs::remove_file(&output);
+        let ours = format!("concat-curve-{}-", std::process::id());
         let leftovers = std::fs::read_dir(&dir)
             .expect("reads the temp folder")
             .flatten()
-            .filter(|entry| {
-                entry
-                    .file_name()
-                    .to_string_lossy()
-                    .starts_with(".concat-curve-test-mix.concat-curve")
-            })
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with(&ours))
             .count();
         assert_eq!(leftovers, 0, "the curve's sound is cleared away");
     }

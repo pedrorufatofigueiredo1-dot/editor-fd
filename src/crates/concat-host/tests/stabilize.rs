@@ -75,6 +75,7 @@ fn shoot(path: &Path) {
         color_range: concat_media::ColorRange::Limited,
         hardware: false,
         threads: 0,
+        software_only: false,
     };
     let mut encoder = Encoder::create(path, WIDTH, HEIGHT, FrameRate::THIRTY, &options)
         .expect("the linked FFmpeg encodes");
@@ -174,6 +175,7 @@ fn a_shaky_shot_is_measured_and_held_still() {
         HEIGHT,
         30,
         1,
+        [0, 0, 0, 255],
     )
     .expect("creates the project");
     let mut session = Session::open_info(&info).expect("opens the project");
@@ -290,6 +292,7 @@ fn a_shaky_shot_is_measured_and_held_still() {
                 Arc::clone(&clips),
                 &session.settings(),
                 FrameSpec {
+                    canvas: [0, 0, 0, 255],
                     time: k as f64 / 30.0,
                     width: WIDTH,
                     height: HEIGHT,
